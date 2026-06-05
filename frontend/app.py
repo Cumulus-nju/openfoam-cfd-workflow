@@ -524,15 +524,20 @@ async def startup():
 
 def main():
     """Entry point: start the server and open the browser."""
-    import webbrowser
+    import os as _os
     url = f"http://{SERVER_HOST}:{SERVER_PORT}"
 
-    # Open browser after a short delay
-    def _open():
-        time.sleep(1.5)
-        webbrowser.open(url)
+    # Open browser after server is ready
+    def _open_browser():
+        time.sleep(3)  # Wait for uvicorn to fully start
+        # Use os.startfile on Windows (more reliable than webbrowser)
+        if _os.name == "nt":
+            _os.startfile(url)
+        else:
+            import webbrowser
+            webbrowser.open(url)
 
-    threading.Thread(target=_open, daemon=True).start()
+    threading.Thread(target=_open_browser, daemon=True).start()
 
     logger.info(f"Starting UrbanWind CFD at {url}")
     uvicorn.run(
