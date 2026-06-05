@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UrbanWind CFD — 城市风场智能建模</title>
+
+    <!-- Fonts: Noto Sans SC for Chinese render quality -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <!-- App CSS -->
+    <link rel="stylesheet" href="/static/css/app.css">
+
+    <!-- Preload SVG icons as inline sprite -->
+</head>
+<body>
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         UrbanWind CFD — Single Page Application
+         ════════════════════════════════════════════════════════════════════ -->
+
+    <div id="app">
+        <!-- Toolbar -->
+        <header id="toolbar">
+            <div class="toolbar-brand">
+                <div class="logo">🌬</div>
+                <span class="brand-text">UrbanWind CFD</span>
+            </div>
+            <div class="toolbar-actions">
+                <button class="btn" onclick="showImportModal()" title="导入数据">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                    </svg>
+                    导入
+                </button>
+                <button class="btn" id="btn-enrich" onclick="runLLMEnrich()" disabled title="LLM智能推断建筑属性">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                    </svg>
+                    智能推断
+                </button>
+                <button class="btn btn-primary" id="btn-generate" onclick="showGenerateModal()" disabled title="生成OpenFOAM案例">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    生成CFD案例
+                </button>
+            </div>
+        </header>
+
+        <!-- Sidebar -->
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <h2>🏗️ 建筑列表</h2>
+                <span id="building-count" style="font-size:12px;color:var(--text-muted)">0 栋</span>
+            </div>
+            <div class="sidebar-content" id="building-list">
+                <div class="empty-state" style="height:200px">
+                    <div class="empty-icon">📋</div>
+                    <p style="font-size:12px">暂无数据<br>点击「导入」开始</p>
+                </div>
+            </div>
+            <div id="properties-panel" style="display:none">
+                <h3>📐 属性编辑</h3>
+                <div id="props-content"></div>
+                <div style="margin-top:12px;display:flex;gap:8px">
+                    <button class="btn btn-sm btn-danger" id="btn-delete-building" style="display:none" onclick="deleteSelectedBuilding()">删除建筑</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Map -->
+        <div id="map-container">
+            <div id="map"></div>
+            <div id="map-loading" class="loading-overlay" style="display:none">
+                <div class="loading-box">
+                    <div class="spinner"></div>
+                    <span>加载中...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Panel -->
+        <div id="chat-panel">
+            <div class="chat-glass">
+                <div class="chat-header" onclick="toggleChat()">
+                    <h3>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                        </svg>
+                        AI 助手
+                        <span class="ai-badge">LLM</span>
+                    </h3>
+                    <button class="btn btn-icon btn-sm" onclick="event.stopPropagation();toggleChat()" title="收起面板">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="chat-messages" id="chat-messages">
+                    <div class="chat-msg assistant">
+                        👋 你好！我是 UrbanWind 建筑建模助手。<br>
+                        试着告诉我你的需求，比如：<br>
+                        • 「导入南京大学鼓楼校区」<br>
+                        • 「把图书馆改成30米高」<br>
+                        • 「在南侧教学楼之间放5个单车点」
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" id="chat-input" placeholder="输入自然语言指令..."
+                           onkeydown="if(event.key==='Enter')sendChat()" autocomplete="off">
+                    <button class="btn btn-sm btn-primary" onclick="sendChat()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <footer id="statusbar">
+            <div class="status-left">
+                <span class="status-indicator">
+                    <span class="status-dot" id="status-dot"></span>
+                    <span id="status-text">就绪</span>
+                </span>
+                <span id="status-buildings">建筑: 0</span>
+                <span id="status-bikes">单车点: 0</span>
+            </div>
+            <div class="status-right">
+                <span id="status-model">模型: 检查中...</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Import Modal
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="import-modal" style="display:none">
+        <div class="modal">
+            <h2>📥 导入建筑数据</h2>
+            <p>选择数据源类型，支持多种格式输入</p>
+
+            <!-- Tab switcher -->
+            <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--bg-primary);border-radius:var(--radius-sm);padding:4px">
+                <button class="btn btn-sm import-tab active" data-tab="osm" onclick="switchImportTab('osm')"
+                        style="flex:1;text-align:center;background:var(--bg-tertiary)">🗺️ OSM地图</button>
+                <button class="btn btn-sm import-tab" data-tab="dxf" onclick="switchImportTab('dxf')"
+                        style="flex:1;text-align:center">📐 DXF图纸</button>
+                <button class="btn btn-sm import-tab" data-tab="manual" onclick="switchImportTab('manual')"
+                        style="flex:1;text-align:center">✏️ 手动输入</button>
+            </div>
+
+            <!-- OSM tab -->
+            <div class="import-tab-content" id="tab-osm">
+                <div class="form-group">
+                    <label>地点名称</label>
+                    <input type="text" id="osm-place" placeholder="例如：南京大学鼓楼校区">
+                </div>
+                <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px">
+                    或手动输入经纬度范围
+                </p>
+                <div class="form-row">
+                    <div class="form-group"><label>南 (lat)</label><input type="number" id="osm-south" step="0.001" placeholder="32.050"></div>
+                    <div class="form-group"><label>西 (lon)</label><input type="number" id="osm-west" step="0.001" placeholder="118.770"></div>
+                    <div class="form-group"><label>北 (lat)</label><input type="number" id="osm-north" step="0.001" placeholder="32.070"></div>
+                    <div class="form-group"><label>东 (lon)</label><input type="number" id="osm-east" step="0.001" placeholder="118.790"></div>
+                </div>
+            </div>
+
+            <!-- DXF tab -->
+            <div class="import-tab-content" id="tab-dxf" style="display:none">
+                <div class="form-group">
+                    <label>上传 DXF 文件</label>
+                    <input type="file" id="dxf-file" accept=".dxf" style="padding:20px;border:2px dashed var(--glass-border);border-radius:var(--radius-md);text-align:center;cursor:pointer">
+                </div>
+                <p style="font-size:11px;color:var(--text-muted)">
+                    支持 AutoCAD DXF 格式。会自动识别闭合多段线为建筑轮廓，匹配附近文字注记为建筑名称/层数。
+                </p>
+            </div>
+
+            <!-- Manual tab -->
+            <div class="import-tab-content" id="tab-manual" style="display:none">
+                <div class="form-group">
+                    <label>自然语言描述</label>
+                    <textarea id="manual-text" placeholder="例如：校园500×500米，北侧一栋图书馆30米高50×30米，南侧两栋教学楼各20米高40×20米，中间广场放5个单车点"></textarea>
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn" onclick="hideImportModal()">取消</button>
+                <button class="btn btn-primary" id="btn-import-exec" onclick="executeImport()">
+                    <span class="spinner" id="import-spinner" style="display:none;width:14px;height:14px"></span>
+                    开始导入
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Generate Modal
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="generate-modal" style="display:none">
+        <div class="modal">
+            <h2>⚡ 生成 CFD 案例</h2>
+            <p>基于当前建筑模型生成完整 OpenFOAM 模拟案例</p>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>案例名称</label>
+                    <input type="text" id="gen-name" value="my_campus" placeholder="my_campus">
+                </div>
+                <div class="form-group">
+                    <label>风速 (m/s)</label>
+                    <input type="number" id="gen-speed" value="5.0" step="0.5" min="1" max="30">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>风向</label>
+                    <select id="gen-direction">
+                        <option value="N">北风 → 南</option>
+                        <option value="S">南风 → 北</option>
+                        <option value="E">东风 → 西</option>
+                        <option value="W">西风 → 东</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>单车站点数</label>
+                    <input type="number" id="gen-bikes" value="20" min="0" max="100">
+                </div>
+            </div>
+            <div style="background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.15);border-radius:var(--radius-md);padding:12px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
+                <strong>📋 生成后步骤（在 WSL 中执行）：</strong><br>
+                <code style="background:var(--bg-primary);padding:2px 6px;border-radius:3px">cd /mnt/d/Phase2_CFD_ML/cfd_cases/&lt;案例名&gt;</code><br>
+                <code style="background:var(--bg-primary);padding:2px 6px;border-radius:3px">blockMesh</code> →
+                <code style="background:var(--bg-primary);padding:2px 6px;border-radius:3px">snappyHexMesh -overwrite</code> →
+                <code style="background:var(--bg-primary);padding:2px 6px;border-radius:3px">simpleFoam</code>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="hideGenerateModal()">取消</button>
+                <button class="btn btn-success" id="btn-generate-exec" onclick="executeGenerate()">
+                    生成案例
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Toast Container
+         ════════════════════════════════════════════════════════════════════ -->
+    <div id="toast-container"></div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Scripts
+         ════════════════════════════════════════════════════════════════════ -->
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- App JS -->
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

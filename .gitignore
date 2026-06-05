@@ -1,0 +1,31 @@
+# Model files (too large for git)
+frontend/models/*.gguf
+frontend/models/llama_bin/
+
+# Generated CFD cases
+cfd_cases/
+
+# Model outputs & training data (large files)
+model_outputs/
+training_data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Temporary files
+tmp_*
+*.tmp
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
