@@ -27,7 +27,7 @@ import uvicorn
 
 from .config import SERVER_HOST, SERVER_PORT, STATIC_DIR, CFD_CASES_DIR, MODEL_FILE
 from .schema import SitePlan, BuildingType, SourceType, validate_site_plan
-from .input_adapters import OSMAdapter, DXFAdapter, ManualAdapter
+from .input_adapters import OSMAdapter, DXFAdapter, ManualAdapter, MSBuildingsAdapter
 from .llm_engine import get_engine, GeometryInferrer, InteractiveEditor
 from .of_generator import assemble_case
 
@@ -203,6 +203,47 @@ async def import_manual(session_id: str = Query(...), request: Dict[str, Any] = 
         }
     except Exception as e:
         logger.error(f"Manual import failed: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/import/msbuildings")
+async def import_ms_buildings(session_id: str = Query(...), request: Dict[str, Any] = Body(...)):
+    """
+    Import building data from Microsoft Global ML Building Footprints.
+    Free, no API key. Good coverage in China.
+
+    Body: {"bbox": [south, west, north, east]} or {"place": "..."}
+    """
+    sess = _get_session(session_id)
+    adapter = MSBuildingsAdapter()
+
+    try:
+        bbox = request.get("bbox")
+        place = request.get("place")
+
+        if bbox and len(bbox) == 4:
+            plan = adapter.parse(bbox=tuple(bbox))
+        elif place:
+            # Geocode place name using OSM Nominatim, then use MS data
+            from .input_adapters.osm_adapter import OSMAdapter
+            osm = OSMAdapter()
+            latlon_bbox = osm._geocode(place)
+            plan = adapter.parse(bbox=latlon_bbox)
+        else:
+            raise HTTPException(400, "Provide 'bbox' or 'place'")
+
+        sess["plan"] = plan
+        sess["editor"] = InteractiveEditor(plan)
+
+        return {
+            "success": True,
+            "num_buildings": len(plan.buildings),
+            "bbox": plan.overall_bbox,
+            "metadata": plan.metadata,
+            "plan": plan.to_dict(),
+        }
+    except Exception as e:
+        logger.error(f"MS Buildings import failed: {e}")
         raise HTTPException(500, str(e))
 
 

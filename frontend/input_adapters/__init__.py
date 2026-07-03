@@ -3,3 +3,4 @@ from .base import AbstractAdapter
 from .osm_adapter import OSMAdapter
 from .dxf_adapter import DXFAdapter
 from .manual_adapter import ManualAdapter
+from .ms_buildings_adapter import MSBuildingsAdapter

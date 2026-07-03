@@ -149,11 +149,11 @@
             <!-- Tab switcher -->
             <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--bg-primary);border-radius:var(--radius-sm);padding:4px">
                 <button class="btn btn-sm import-tab active" data-tab="osm" onclick="switchImportTab('osm')"
-                        style="flex:1;text-align:center;background:var(--bg-tertiary)">🗺️ OSM地图</button>
-                <button class="btn btn-sm import-tab" data-tab="dxf" onclick="switchImportTab('dxf')"
-                        style="flex:1;text-align:center">📐 DXF图纸</button>
+                        style="flex:1;text-align:center;background:var(--bg-tertiary)">🗺️ OSM</button>
+                <button class="btn btn-sm import-tab" data-tab="msbuildings" onclick="switchImportTab('msbuildings')"
+                        style="flex:1;text-align:center;font-size:11px">🏢 微软建筑</button>
                 <button class="btn btn-sm import-tab" data-tab="manual" onclick="switchImportTab('manual')"
-                        style="flex:1;text-align:center">✏️ 手动输入</button>
+                        style="flex:1;text-align:center;font-size:11px">✏️ 手动</button>
             </div>
 
             <!-- OSM tab -->
@@ -170,6 +170,23 @@
                     <div class="form-group"><label>西 (lon)</label><input type="number" id="osm-west" step="0.001" placeholder="118.770"></div>
                     <div class="form-group"><label>北 (lat)</label><input type="number" id="osm-north" step="0.001" placeholder="32.070"></div>
                     <div class="form-group"><label>东 (lon)</label><input type="number" id="osm-east" step="0.001" placeholder="118.790"></div>
+                </div>
+            </div>
+
+            <!-- MS Buildings tab -->
+            <div class="import-tab-content" id="tab-msbuildings" style="display:none">
+                <div class="form-group">
+                    <label>地点名称（选填）</label>
+                    <input type="text" id="ms-place" placeholder="例如：深圳中学">
+                </div>
+                <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px">
+                    或手动输入经纬度范围。国内覆盖优于 OSM，尤其适合中小城市和郊区。
+                </p>
+                <div class="form-row">
+                    <div class="form-group"><label>南 (lat)</label><input type="number" id="ms-south" step="0.001" placeholder="32.050"></div>
+                    <div class="form-group"><label>西 (lon)</label><input type="number" id="ms-west" step="0.001" placeholder="118.770"></div>
+                    <div class="form-group"><label>北 (lat)</label><input type="number" id="ms-north" step="0.001" placeholder="32.070"></div>
+                    <div class="form-group"><label>东 (lon)</label><input type="number" id="ms-east" step="0.001" placeholder="118.790"></div>
                 </div>
             </div>
 
