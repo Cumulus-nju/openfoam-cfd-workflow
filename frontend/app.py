@@ -27,7 +27,7 @@ import uvicorn
 
 from .config import SERVER_HOST, SERVER_PORT, STATIC_DIR, CFD_CASES_DIR, MODEL_FILE
 from .schema import SitePlan, BuildingType, SourceType, validate_site_plan
-from .input_adapters import OSMAdapter, DXFAdapter, ManualAdapter, MSBuildingsAdapter
+from .input_adapters import OSMAdapter, DXFAdapter, ManualAdapter, MSBuildingsAdapter, GaodeAdapter
 from .llm_engine import get_engine, GeometryInferrer, InteractiveEditor
 from .of_generator import assemble_case
 
@@ -244,6 +244,32 @@ async def import_ms_buildings(session_id: str = Query(...), request: Dict[str, A
         }
     except Exception as e:
         logger.error(f"MS Buildings import failed: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/import/gaode")
+async def import_gaode(session_id: str = Query(...), request: Dict[str, Any] = Body(...)):
+    """
+    Import building data from Gaode (Amap) REST API.
+
+    Body: {"place": "南京大学", "keywords": "学校"} or {"lat": 32.05, "lon": 118.78}
+    """
+    sess = _get_session(session_id)
+    adapter = GaodeAdapter()
+
+    try:
+        plan = adapter.parse(source=request)
+        sess["plan"] = plan
+        sess["editor"] = InteractiveEditor(plan)
+
+        return {
+            "success": True,
+            "num_buildings": len(plan.buildings),
+            "metadata": plan.metadata,
+            "plan": plan.to_dict(),
+        }
+    except Exception as e:
+        logger.error(f"Gaode import failed: {e}")
         raise HTTPException(500, str(e))
 
 

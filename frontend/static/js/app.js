@@ -607,6 +607,9 @@ async function executeImport() {
         } else if (currentImportTab === 'msbuildings') {
             updateImportProgress(10, '正在连接 Microsoft 建筑数据...');
             await importMSBuildings();
+        } else if (currentImportTab === 'gaode') {
+            updateImportProgress(10, '正在连接高德地图...');
+            await importGaode();
         }
 
         clearInterval(progressInterval);
@@ -738,6 +741,28 @@ async function importMSBuildings() {
     API.plan = data.plan;
     renderPlanOnMap(data.plan);
     showToast(`成功导入 ${data.num_buildings} 栋建筑 (Microsoft)`, 'success');
+}
+
+async function importGaode() {
+    const place = document.getElementById('gaode-place').value.trim();
+    const keywords = document.getElementById('gaode-keywords').value.trim() || '学校';
+
+    if (!place) {
+        throw new Error('请输入地点名称');
+    }
+
+    const resp = await fetch(`/api/import/gaode?session_id=${API.sessionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ place, keywords }),
+    });
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.detail);
+
+    API.plan = data.plan;
+    renderPlanOnMap(data.plan);
+    const note = data.metadata?.note || '';
+    showToast(`成功导入 ${data.num_buildings} 栋建筑 (高德${note ? '，' + note : ''})`, 'success');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -4,3 +4,4 @@ from .osm_adapter import OSMAdapter
 from .dxf_adapter import DXFAdapter
 from .manual_adapter import ManualAdapter
 from .ms_buildings_adapter import MSBuildingsAdapter
+from .gaode_adapter import GaodeAdapter

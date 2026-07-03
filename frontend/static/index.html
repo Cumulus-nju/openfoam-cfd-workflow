@@ -147,13 +147,15 @@
             <p>选择数据源类型，支持多种格式输入</p>
 
             <!-- Tab switcher -->
-            <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--bg-primary);border-radius:var(--radius-sm);padding:4px">
+            <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--bg-primary);border-radius:var(--radius-sm);padding:4px;flex-wrap:wrap">
                 <button class="btn btn-sm import-tab active" data-tab="osm" onclick="switchImportTab('osm')"
-                        style="flex:1;text-align:center;background:var(--bg-tertiary)">🗺️ OSM</button>
-                <button class="btn btn-sm import-tab" data-tab="msbuildings" onclick="switchImportTab('msbuildings')"
-                        style="flex:1;text-align:center;font-size:11px">🏢 微软建筑</button>
+                        style="flex:1;text-align:center;min-width:70px;background:var(--bg-tertiary)">🗺️ OSM</button>
+                <button class="btn btn-sm import-tab" data-tab="gaode" onclick="switchImportTab('gaode')"
+                        style="flex:1;text-align:center;min-width:70px">📍 高德</button>
+                <button class="btn btn-sm import-tab" data-tab="dxf" onclick="switchImportTab('dxf')"
+                        style="flex:1;text-align:center;min-width:70px">📐 DXF</button>
                 <button class="btn btn-sm import-tab" data-tab="manual" onclick="switchImportTab('manual')"
-                        style="flex:1;text-align:center;font-size:11px">✏️ 手动</button>
+                        style="flex:1;text-align:center;min-width:70px">✏️ 手动</button>
             </div>
 
             <!-- OSM tab -->
@@ -188,6 +190,19 @@
                     <div class="form-group"><label>北 (lat)</label><input type="number" id="ms-north" step="0.001" placeholder="32.070"></div>
                     <div class="form-group"><label>东 (lon)</label><input type="number" id="ms-east" step="0.001" placeholder="118.790"></div>
                 </div>
+            </div>
+
+            <!-- Gaode tab -->
+            <div class="import-tab-content" id="tab-gaode" style="display:none">
+                <div class="form-group">
+                    <label>地点名称</label>
+                    <input type="text" id="gaode-place" placeholder="例如：深圳中学">
+                </div>
+                <div class="form-group">
+                    <label>搜索关键词</label>
+                    <input type="text" id="gaode-keywords" value="学校" placeholder="学校、小区、写字楼...">
+                </div>
+                <p style="font-size:11px;color:var(--text-muted)">国内全覆盖，返回矩形近似建筑（基于类型标准尺寸）。</p>
             </div>
 
             <!-- DXF tab -->
