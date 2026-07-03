@@ -212,9 +212,16 @@
             <!-- Overture tab -->
             <div class="import-tab-content" id="tab-overture" style="display:none">
                 <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
-                    🌐 Overture Maps — 微软+Meta+Esri 建筑数据，精确轮廓，覆盖全中国。<br>
+                    🌐 Overture Maps — 微软+Meta+Esri 建筑数据，精确轮廓。<br>
                     首次查询较慢（下载缓存），后续秒出。
                 </p>
+                <div class="form-group">
+                    <label>地点名称</label>
+                    <div style="display:flex;gap:4px">
+                        <input type="text" id="ov-place" placeholder="例如：深圳中学" style="flex:1">
+                        <button class="btn btn-sm" onclick="flyToPlaceOverture()" title="定位并填入经纬度" style="flex-shrink:0">🔍 定位</button>
+                    </div>
+                </div>
                 <div class="form-row">
                     <div class="form-group"><label>南 (lat)</label><input type="number" id="ov-south" step="0.001" placeholder="32.050"></div>
                     <div class="form-group"><label>西 (lon)</label><input type="number" id="ov-west" step="0.001" placeholder="118.770"></div>
@@ -334,6 +341,6 @@
     <!-- Leaflet Draw JS -->
     <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
     <!-- App JS -->
-    <script src="/static/js/app.js?v=9"></script>
+    <script src="/static/js/app.js?v=11"></script>
 </body>
 </html>

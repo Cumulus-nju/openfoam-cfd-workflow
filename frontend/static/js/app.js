@@ -853,13 +853,52 @@ function fillOvertureFromOSM() {
     showToast('已复制 OSM 经纬度', 'success');
 }
 
+async function flyToPlaceOverture() {
+    const place = document.getElementById('ov-place').value.trim();
+    if (!place) { showToast('请先输入地点名称', 'error'); return; }
+    try {
+        const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(place)}&format=json&limit=1`);
+        const data = await resp.json();
+        if (data.length > 0) {
+            const lat = parseFloat(data[0].lat);
+            const lon = parseFloat(data[0].lon);
+            map.setView([lat, lon], 16);
+            if (data[0].boundingbox) {
+                const bb = data[0].boundingbox;
+                document.getElementById('ov-south').value = parseFloat(bb[0]).toFixed(5);
+                document.getElementById('ov-north').value = parseFloat(bb[1]).toFixed(5);
+                document.getElementById('ov-west').value = parseFloat(bb[2]).toFixed(5);
+                document.getElementById('ov-east').value = parseFloat(bb[3]).toFixed(5);
+            }
+            showToast(`已定位: ${data[0].display_name.substring(0, 60)}`, 'success');
+        } else { showToast('未找到该地点', 'error'); }
+    } catch(e) { showToast('定位失败', 'error'); }
+}
+
 async function importOverture() {
+    const place = document.getElementById('ov-place').value.trim();
     const south = document.getElementById('ov-south').value;
     const west = document.getElementById('ov-west').value;
     const north = document.getElementById('ov-north').value;
     const east = document.getElementById('ov-east').value;
-    if (!south || !west || !north || !east) throw new Error('请填写完整经纬度范围');
-    const body = { bbox: [parseFloat(south), parseFloat(west), parseFloat(north), parseFloat(east)] };
+
+    let body = {};
+    if (place && !south) {
+        // Geocode first, then use that bbox
+        updateImportProgress(5, '正在定位地址...');
+        const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(place)}&format=json&limit=1`);
+        const data = await resp.json();
+        if (data.length > 0 && data[0].boundingbox) {
+            const bb = data[0].boundingbox;
+            body.bbox = [parseFloat(bb[0]), parseFloat(bb[2]), parseFloat(bb[1]), parseFloat(bb[3])];
+        } else {
+            throw new Error('无法定位该地点，请手动输入经纬度');
+        }
+    } else if (south && west && north && east) {
+        body.bbox = [parseFloat(south), parseFloat(west), parseFloat(north), parseFloat(east)];
+    } else {
+        throw new Error('请输入地点名称或经纬度范围');
+    }
     updateImportProgress(30, '正在下载 Overture 建筑数据（首次较慢）...');
     const resp = await fetch(`/api/import/overture?session_id=${API.sessionId}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
