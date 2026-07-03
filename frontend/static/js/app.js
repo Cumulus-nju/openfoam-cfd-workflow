@@ -108,7 +108,8 @@ async function checkHealth() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function renderPlanOnMap(plan) {
-    if (!plan || !plan.features) return;
+    console.log('renderPlanOnMap called, plan:', plan ? 'has plan' : 'no plan', 'features:', plan?.features?.length);
+    if (!plan || !plan.features) { console.log('renderPlanOnMap: no plan/features, returning'); return; }
 
     // Clear existing layers
     Object.values(buildingLayers).forEach(l => map.removeLayer(l));
@@ -124,11 +125,20 @@ function renderPlanOnMap(plan) {
         }
     });
 
-    // Fit bounds
+    // Fit bounds — use both methods for reliability
     const allLayers = [...Object.values(buildingLayers), ...Object.values(bikeLayers)];
     if (allLayers.length > 0) {
         const group = L.featureGroup(allLayers);
-        map.fitBounds(group.getBounds(), { padding: [50, 50], maxZoom: 18 });
+        const bounds = group.getBounds();
+        if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 });
+        }
+    }
+    // Backup: fly to first building if bounds failed
+    if (allLayers.length > 0) {
+        const firstLayer = allLayers[0];
+        const center = firstLayer.getBounds ? firstLayer.getBounds().getCenter() : firstLayer.getLatLng();
+        if (center) map.setView(center, 16);
     }
 
     // Update UI counters
@@ -607,9 +617,6 @@ async function executeImport() {
         } else if (currentImportTab === 'msbuildings') {
             updateImportProgress(10, '正在连接 Microsoft 建筑数据...');
             await importMSBuildings();
-        } else if (currentImportTab === 'gaode') {
-            updateImportProgress(10, '正在连接高德地图...');
-            await importGaode();
         }
 
         clearInterval(progressInterval);
@@ -751,16 +758,20 @@ async function importGaode() {
         throw new Error('请输入地点名称');
     }
 
+    console.log('Gaode import:', place, keywords);
     const resp = await fetch(`/api/import/gaode?session_id=${API.sessionId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ place, keywords }),
     });
     const data = await resp.json();
+    console.log('Gaode response:', data.success, data.num_buildings);
     if (!data.success) throw new Error(data.detail);
 
     API.plan = data.plan;
+    console.log('Calling renderPlanOnMap with', data.plan.features?.length, 'features');
     renderPlanOnMap(data.plan);
+    console.log('Rendering done');
     const note = data.metadata?.note || '';
     showToast(`成功导入 ${data.num_buildings} 栋建筑 (高德${note ? '，' + note : ''})`, 'success');
 }

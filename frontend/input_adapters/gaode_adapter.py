@@ -267,14 +267,18 @@ class GaodeAdapter(AbstractAdapter):
             else:
                 height = float(height)
 
-            # Create rectangular footprint centered on POI location
-            hw, hd = width / 2, depth / 2
+            # Convert meters to degrees for footprint
+            cos_lat = math.cos(math.radians(plat))
+            deg_per_m_lon = 1.0 / (111320.0 * cos_lat)
+            deg_per_m_lat = 1.0 / 111320.0
+            hw_deg = (width / 2) * deg_per_m_lon
+            hd_deg = (depth / 2) * deg_per_m_lat
             footprint = [
-                [plon - hw, plat - hd],
-                [plon + hw, plat - hd],
-                [plon + hw, plat + hd],
-                [plon - hw, plat + hd],
-                [plon - hw, plat - hd],
+                [plon - hw_deg, plat - hd_deg],
+                [plon + hw_deg, plat - hd_deg],
+                [plon + hw_deg, plat + hd_deg],
+                [plon - hw_deg, plat + hd_deg],
+                [plon - hw_deg, plat - hd_deg],
             ]
 
             feature = make_building_feature(
