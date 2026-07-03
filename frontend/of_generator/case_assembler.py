@@ -34,6 +34,7 @@ class CaseAssembler:
         base_dir: Optional[Path] = None,
         wind_speed: float = 5.0,
         wind_direction: str = "N",
+        cell_size: Optional[float] = None,
     ):
         self.plan = plan
         self.case_name = case_name
@@ -41,6 +42,7 @@ class CaseAssembler:
         self.case_dir = self.base_dir / case_name
         self.wind_speed = wind_speed
         self.wind_direction = wind_direction
+        self.cell_size = cell_size
 
     def assemble(
         self,
@@ -72,7 +74,7 @@ class CaseAssembler:
         tri_surface_dir.mkdir(parents=True, exist_ok=True)
 
         n_stl = geojson_to_stl(self.plan, tri_surface_dir)
-        print(f"  ✓ Wrote {n_stl} STL files to {tri_surface_dir}")
+        print(f"  [OK] Wrote {n_stl} STL files to {tri_surface_dir}")
 
         # Step 3: Generate dictionaries
         generator = DictGenerator(
@@ -80,13 +82,14 @@ class CaseAssembler:
             self.case_dir,
             wind_speed=self.wind_speed,
             wind_direction=self.wind_direction,
+            cell_size=self.cell_size,
         )
         generator.generate_all()
-        print(f"  ✓ Generated all OpenFOAM dictionaries")
+        print(f"  [OK] Generated all OpenFOAM dictionaries")
 
         # Save the SitePlan alongside the case for reproducibility
         self.plan.to_file(self.case_dir / "site_plan.geojson")
-        print(f"  ✓ Site plan saved to {self.case_dir / 'site_plan.geojson'}")
+        print(f"  [OK] Site plan saved to {self.case_dir / 'site_plan.geojson'}")
 
         print(f"\nCase assembled at: {self.case_dir}")
         print(f"Next steps:")
@@ -112,6 +115,8 @@ def assemble_case(
     wind_speed: float = 5.0,
     wind_direction: str = "N",
     n_bikes: int = 20,
+    base_dir: Optional[Path] = None,
+    cell_size: Optional[float] = None,
 ) -> Path:
     """
     Quick one-shot case assembly.
@@ -128,7 +133,9 @@ def assemble_case(
     """
     assembler = CaseAssembler(
         plan, case_name,
+        base_dir=base_dir,
         wind_speed=wind_speed,
         wind_direction=wind_direction,
+        cell_size=cell_size,
     )
     return assembler.assemble(n_bikes=n_bikes)

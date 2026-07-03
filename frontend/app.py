@@ -390,6 +390,11 @@ async def generate_case(session_id: str = Query(...), request: Dict[str, Any] = 
     wind_speed = float(request.get("wind_speed", 5.0))
     wind_direction = str(request.get("wind_direction", "N")).upper()
     n_bikes = int(request.get("n_bikes", 20))
+    output_dir = request.get("output_dir", None)
+    cell_size = request.get("cell_size", None)
+    if cell_size is not None:
+        cell_size = float(cell_size)
+    base_dir = Path(output_dir) if output_dir else None
 
     try:
         case_dir = assemble_case(
@@ -397,12 +402,16 @@ async def generate_case(session_id: str = Query(...), request: Dict[str, Any] = 
             wind_speed=wind_speed,
             wind_direction=wind_direction,
             n_bikes=n_bikes,
+            base_dir=base_dir,
+            cell_size=cell_size,
         )
 
+        wsl_drive = str(case_dir)[0].lower()
+        wsl_path = f"/mnt/{wsl_drive}/" + str(case_dir)[2:].replace("\\", "/")
         return {
             "success": True,
             "case_dir": str(case_dir),
-            "wsl_path": f"/mnt/d/Phase2_CFD_ML/cfd_cases/{case_name}",
+            "wsl_path": wsl_path,
             "num_buildings": len(plan.buildings),
             "num_bikes": len(plan.bike_stations),
             "next_steps": [

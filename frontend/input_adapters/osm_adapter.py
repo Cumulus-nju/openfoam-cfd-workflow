@@ -7,6 +7,7 @@ converts them to the unified SitePlan format.
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -18,7 +19,9 @@ from ..schema import (
     SitePlan, Feature, Geometry, BuildingType, SourceType,
     make_building_feature, BuildingProperties,
 )
-from ..config import OSM_OVERPASS_URL, OSM_TIMEOUT
+from ..config import OSM_OVERPASS_URL, OSM_OVERPASS_FALLBACKS, OSM_TIMEOUT
+import logging
+logger = logging.getLogger("urbanwind")
 
 
 # ── OSM tag → BuildingType mapping ──────────────────────────────────────────
@@ -135,20 +138,31 @@ out skel qt;
 
 
 def _query_overpass(query: str) -> Optional[Dict[str, Any]]:
-    """Execute an Overpass API query and return parsed JSON."""
-    req = Request(
-        OSM_OVERPASS_URL,
-        data=query.encode("utf-8"),
-        headers={
-            "User-Agent": "UrbanWind-CFD/0.1 (academic research tool)",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-    )
-    try:
-        with urlopen(req, timeout=OSM_TIMEOUT) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except URLError as e:
-        raise ConnectionError(f"Overpass API request failed: {e}")
+    """Execute an Overpass API query with automatic fallback on failure."""
+    urls = [OSM_OVERPASS_URL] + list(OSM_OVERPASS_FALLBACKS)
+    last_error = None
+
+    for url in urls:
+        try:
+            logger.info(f"Trying Overpass: {url}")
+            req = Request(
+                url,
+                data=query.encode("utf-8"),
+                headers={
+                    "User-Agent": "UrbanWind-CFD/0.1 (academic research tool)",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+            )
+            with urlopen(req, timeout=OSM_TIMEOUT) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                logger.info(f"Overpass success: {url}")
+                return data
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Overpass failed ({url}): {e}")
+            continue
+
+    raise ConnectionError(f"All Overpass endpoints failed. Last error: {last_error}")
 
 
 # ── Geometry helpers ─────────────────────────────────────────────────────────
@@ -339,16 +353,19 @@ class OSMAdapter(AbstractAdapter):
                     feature.properties["osm_tags"] = tags
                     features.append(feature)
 
-        # Build SitePlan
+        # Build SitePlan (coordinates kept in WGS84 for map display)
         center_lat = (south + north) / 2
         center_lon = (west + east) / 2
 
+        # Store projection reference so STL/CFD generators can project to meters
         plan = SitePlan(
             features=features,
             metadata={
                 "source": "osm",
                 "bbox": [west, south, east, north],
                 "center": [center_lon, center_lat],
+                "center_lat": center_lat,
+                "center_lon": center_lon,
                 "num_buildings": len(features),
                 "query_time": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "data_license": "OpenStreetMap © OpenStreetMap contributors (ODbL)",

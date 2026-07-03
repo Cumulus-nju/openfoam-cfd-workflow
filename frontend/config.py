@@ -14,8 +14,8 @@ PROJECT_ROOT = Path("D:/Phase2_CFD_ML")
 FRONTEND_ROOT = PROJECT_ROOT / "frontend"
 MODELS_DIR = FRONTEND_ROOT / "models"
 STATIC_DIR = FRONTEND_ROOT / "static"
-CFD_CASES_DIR = PROJECT_ROOT / "cfd_cases"
-OUTPUT_DIR = PROJECT_ROOT / "model_outputs"
+CFD_CASES_DIR = Path("E:/UrbanWind/cfd_cases")
+OUTPUT_DIR = Path("E:/UrbanWind/model_outputs")
 
 # Model
 MODEL_FILE = MODELS_DIR / "qwen2.5-0.5b-instruct-q4_k_m.gguf"
@@ -39,6 +39,8 @@ DOMAIN_PADDING_TOP_FACTOR = 3.0 # Domain height = max_building_height × factor
 # Mesh resolution
 BACKGROUND_CELL_SIZE = 2.0      # meters per cell in background mesh
 SNAPPY_REFINEMENT_LEVELS = (2, 3)  # (min, max) refinement levels
+SNAPPY_MAX_LOCAL_CELLS = 5000000
+SNAPPY_MAX_GLOBAL_CELLS = 80000000  # For large domains (>50M cells)
 
 # Wind defaults
 DEFAULT_WIND_SPEED = 5.0       # m/s at reference height
@@ -58,8 +60,12 @@ WRITE_INTERVAL = 100
 
 # ── OSM Defaults ─────────────────────────────────────────────────────────────
 
-OSM_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-OSM_TIMEOUT = 30  # seconds
+OSM_OVERPASS_URL = "https://z.overpass-api.de/api/interpreter"
+OSM_OVERPASS_FALLBACKS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
+OSM_TIMEOUT = 60  # seconds
 
 # ── Server ───────────────────────────────────────────────────────────────────
 

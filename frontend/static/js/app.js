@@ -567,26 +567,73 @@ function switchImportTab(tab) {
     document.getElementById(`tab-${tab}`).style.display = 'block';
 }
 
+function updateImportProgress(pct, text) {
+    const bar = document.getElementById('import-progress-bar');
+    const pctEl = document.getElementById('import-progress-pct');
+    const textEl = document.getElementById('import-progress-text');
+    const progress = document.getElementById('import-progress');
+    progress.style.display = 'block';
+    bar.style.width = pct + '%';
+    pctEl.textContent = Math.round(pct) + '%';
+    textEl.textContent = text;
+}
+
 async function executeImport() {
     const btn = document.getElementById('btn-import-exec');
-    const spinner = document.getElementById('import-spinner');
+    const cancelBtn = document.getElementById('btn-import-cancel');
     btn.disabled = true;
-    spinner.style.display = 'inline-block';
+    cancelBtn.disabled = true;
+
+    // Reset progress bar
+    updateImportProgress(0, '准备导入...');
 
     try {
+        // Simulate progress during API call
+        const progressInterval = setInterval(() => {
+            const bar = document.getElementById('import-progress-bar');
+            const cur = parseFloat(bar.style.width) || 0;
+            if (cur < 85) updateImportProgress(cur + 3, '正在获取数据...');
+        }, 300);
+
         if (currentImportTab === 'osm') {
+            updateImportProgress(10, '正在连接 OpenStreetMap...');
             await importOSM();
         } else if (currentImportTab === 'dxf') {
+            updateImportProgress(10, '正在解析 DXF 文件...');
             await importDXF();
         } else if (currentImportTab === 'manual') {
+            updateImportProgress(10, '正在解析建筑描述...');
             await importManual();
         }
+
+        clearInterval(progressInterval);
+        updateImportProgress(90, '正在渲染地图...');
+
+        // Brief pause to show completion
+        await new Promise(r => setTimeout(r, 400));
+        updateImportProgress(100, '导入完成！');
+
+        await new Promise(r => setTimeout(r, 300));
+        hideImportModal();
+        // Reset for next time
+        setTimeout(() => {
+            updateImportProgress(0, '准备导入...');
+            document.getElementById('import-progress').style.display = 'none';
+        }, 200);
+
     } catch (e) {
+        clearInterval(progressInterval);
+        updateImportProgress(0, '导入失败');
+        document.getElementById('import-progress-bar').style.background = '#ef4444';
         showToast(`导入失败: ${e.message}`, 'error');
+        // Reset after delay
+        setTimeout(() => {
+            document.getElementById('import-progress-bar').style.background = '';
+            document.getElementById('import-progress').style.display = 'none';
+        }, 2000);
     } finally {
         btn.disabled = false;
-        spinner.style.display = 'none';
-        hideImportModal();
+        cancelBtn.disabled = false;
     }
 }
 
@@ -695,9 +742,43 @@ async function runLLMEnrich() {
 // Generate modal
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ── Output directory persistence ──────────────────────────────────
+const DEFAULT_OUTPUT = 'E:\\\\UrbanWind\\\\cfd_cases';
+
+function getOutputDir() {
+    return localStorage.getItem('urbanwind_output_dir') || DEFAULT_OUTPUT;
+}
+
+function saveOutputDir(dir) {
+    if (dir) localStorage.setItem('urbanwind_output_dir', dir);
+    else localStorage.removeItem('urbanwind_output_dir');
+}
+
+function resetOutputDir() {
+    localStorage.removeItem('urbanwind_output_dir');
+    document.getElementById('gen-output-dir').value = DEFAULT_OUTPUT;
+    updateWslPathPreview();
+}
+
+function updateWslPathPreview() {
+    const dir = document.getElementById('gen-output-dir').value.trim() || DEFAULT_OUTPUT;
+    const name = document.getElementById('gen-name').value.trim() || 'my_campus';
+    const drive = dir.charAt(0).toLowerCase();
+    const rest = dir.replace(/\\/g, '/').replace(/^.:/, '');
+    document.getElementById('gen-wsl-path').textContent = `cd /mnt/${drive}${rest}/${name}`;
+}
+
 function showGenerateModal() {
     if (!API.plan) return;
+    document.getElementById('gen-output-dir').value = getOutputDir();
+    const savedCellSize = localStorage.getItem('urbanwind_cell_size') || '2';
+    document.getElementById('gen-cell-size').value = savedCellSize;
+    document.getElementById('gen-cell-size-val').textContent = savedCellSize + 'm';
     document.getElementById('generate-modal').style.display = 'flex';
+    updateWslPathPreview();
+    // Live preview as user types
+    document.getElementById('gen-output-dir').oninput = () => { saveOutputDir(document.getElementById('gen-output-dir').value); updateWslPathPreview(); };
+    document.getElementById('gen-name').oninput = updateWslPathPreview;
 }
 
 function hideGenerateModal() {
@@ -709,11 +790,19 @@ async function executeGenerate() {
     btn.disabled = true;
     btn.textContent = '生成中...';
 
+    const outputDir = document.getElementById('gen-output-dir').value.trim() || DEFAULT_OUTPUT;
+    saveOutputDir(outputDir);
+
+    const cellSize = parseFloat(document.getElementById('gen-cell-size').value) || 2.0;
+    localStorage.setItem('urbanwind_cell_size', cellSize);
+
     const body = {
         case_name: document.getElementById('gen-name').value.trim() || 'my_campus',
         wind_speed: parseFloat(document.getElementById('gen-speed').value) || 5.0,
         wind_direction: document.getElementById('gen-direction').value,
         n_bikes: parseInt(document.getElementById('gen-bikes').value) || 20,
+        output_dir: outputDir,
+        cell_size: cellSize,
     };
 
     try {

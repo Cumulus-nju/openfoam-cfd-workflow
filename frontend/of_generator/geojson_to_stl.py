@@ -9,9 +9,36 @@ from __future__ import annotations
 import struct
 import math
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from ..schema import SitePlan, Feature
+
+
+def _get_projection(plan: SitePlan):
+    """Get lat/lon→meters projection parameters from plan metadata."""
+    meta = plan.metadata
+    center_lat = meta.get("center_lat")
+    center_lon = meta.get("center_lon")
+    if center_lat is None or center_lon is None:
+        return None  # not OSM data, no projection needed
+    cos_lat = math.cos(math.radians(center_lat))
+    return {
+        "center_lon": center_lon,
+        "center_lat": center_lat,
+        "m_per_deg_lon": 111320.0 * cos_lat,
+        "m_per_deg_lat": 111320.0,
+    }
+
+
+def _project_coords(coords: List[List[float]], proj: dict) -> List[Tuple[float, float]]:
+    """Project WGS84 coords to local meters."""
+    return [
+        (
+            (p[0] - proj["center_lon"]) * proj["m_per_deg_lon"],
+            (p[1] - proj["center_lat"]) * proj["m_per_deg_lat"],
+        )
+        for p in coords
+    ]
 
 
 def geojson_to_stl(
@@ -21,6 +48,8 @@ def geojson_to_stl(
 ) -> int:
     """
     Write all building and bike station STLs from a SitePlan.
+
+    Automatically projects WGS84→meters for OSM-sourced plans.
 
     Args:
         plan: SitePlan with buildings and optionally bike stations
@@ -34,14 +63,17 @@ def geojson_to_stl(
     output_dir.mkdir(parents=True, exist_ok=True)
     count = 0
 
+    proj = _get_projection(plan)  # None if not OSM data
+
     for feature in plan.features:
         if feature.category == "building":
             height = float(feature.properties.get("height", 12.0))
             coords = feature.geometry.coordinates
             if coords and coords[0]:
-                footprint = [(p[0], p[1]) for p in coords[0]]
+                raw = [(p[0], p[1]) for p in coords[0]]
+                footprint = _project_coords(raw, proj) if proj else raw
                 _write_stl_cuboid(
-                    output_dir / f"{feature.id}.stl",
+                    output_dir / f"{'s_' if feature.id[0].isdigit() else ''}{feature.id}.stl",
                     footprint, 0.0, height,
                 )
                 count += 1

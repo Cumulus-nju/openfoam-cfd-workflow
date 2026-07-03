@@ -17,6 +17,7 @@ from ..schema import SitePlan, Feature
 from ..config import (
     DOMAIN_PADDING_UPSTREAM, DOMAIN_PADDING_DOWNSTREAM, DOMAIN_PADDING_SIDE,
     DOMAIN_PADDING_TOP_FACTOR, BACKGROUND_CELL_SIZE, SNAPPY_REFINEMENT_LEVELS,
+    SNAPPY_MAX_LOCAL_CELLS, SNAPPY_MAX_GLOBAL_CELLS,
     DEFAULT_WIND_SPEED, DEFAULT_REFERENCE_HEIGHT, END_TIME, WRITE_INTERVAL,
 )
 
@@ -37,12 +38,14 @@ class DictGenerator:
         wind_speed: float = DEFAULT_WIND_SPEED,
         wind_direction: str = "N",
         reference_height: float = DEFAULT_REFERENCE_HEIGHT,
+        cell_size: Optional[float] = None,
     ):
         self.plan = plan
         self.case_dir = Path(case_dir)
         self.wind_speed = wind_speed
         self.wind_direction = wind_direction.upper()
         self.reference_height = reference_height
+        self._cell_size = cell_size if cell_size else BACKGROUND_CELL_SIZE
 
         # Computed domain parameters
         self._compute_domain()
@@ -70,10 +73,27 @@ class DictGenerator:
 
     # ── Domain computation ───────────────────────────────────────────────────
 
+    def _project_bbox(self):
+        """Get bounding box in meters (project from WGS84 if OSM source)."""
+        bbox = self.plan.overall_bbox
+        meta = self.plan.metadata
+        if meta.get("center_lat") and meta.get("center_lon"):
+            import math
+            clat, clon = meta["center_lat"], meta["center_lon"]
+            cos_lat = math.cos(math.radians(clat))
+            m_lon = 111320.0 * cos_lat
+            m_lat = 111320.0
+            return (
+                (bbox[0] - clon) * m_lon,
+                (bbox[1] - clat) * m_lat,
+                (bbox[2] - clon) * m_lon,
+                (bbox[3] - clat) * m_lat,
+            )
+        return bbox
+
     def _compute_domain(self):
         """Compute CFD domain dimensions from building layout."""
-        bbox = self.plan.overall_bbox
-        min_x, min_y, max_x, max_y = bbox
+        min_x, min_y, max_x, max_y = self._project_bbox()
 
         # Expand domain
         if self.wind_direction == "N":
@@ -107,9 +127,9 @@ class DictGenerator:
         self.z_max = max_height * DOMAIN_PADDING_TOP_FACTOR
 
         # Background mesh resolution
-        self.nx = max(20, int((self.x_max - self.x_min) / BACKGROUND_CELL_SIZE))
-        self.ny = max(20, int((self.y_max - self.y_min) / BACKGROUND_CELL_SIZE))
-        self.nz = max(10, int((self.z_max - self.z_min) / BACKGROUND_CELL_SIZE))
+        self.nx = max(20, int((self.x_max - self.x_min) / self._cell_size))
+        self.ny = max(20, int((self.y_max - self.y_min) / self._cell_size))
+        self.nz = max(10, int((self.z_max - self.z_min) / self._cell_size))
 
     # ── System dictionaries ──────────────────────────────────────────────────
 
@@ -174,7 +194,7 @@ boundary
     }}
     top
     {{
-        type patch;
+        type symmetry;
         faces
         (
             (4 5 6 7)
@@ -190,7 +210,7 @@ boundary
     }}
     sides
     {{
-        type patch;
+        type symmetry;
         faces
         (
             {self._side_faces()}
@@ -215,15 +235,15 @@ mergePatchPairs
         geom_lines = []
         refinement_lines = []
         for b in buildings:
-            name = b.id
-            geom_lines.append(f'    {name}\n    {{\n        type triSurfaceMesh;\n        name {name};\n    }}')
+            name = f"{'s_' if b.id[0].isdigit() else ''}{b.id}"
+            geom_lines.append(f'    {name}\n    {{\n        type triSurfaceMesh;\n        file "{name}.stl";\n    }}')
             # Refine around buildings
             level = SNAPPY_REFINEMENT_LEVELS
             refinement_lines.append(f'        {name}\n        {{\n            level ({level[0]} {level[1]});\n        }}')
 
         for bike in bike_stations:
-            name = bike.id
-            geom_lines.append(f'    {name}\n    {{\n        type triSurfaceMesh;\n        name {name};\n    }}')
+            name = f"{'s_' if bike.id[0].isdigit() else ''}{bike.id}"
+            geom_lines.append(f'    {name}\n    {{\n        type triSurfaceMesh;\n        file "{name}.stl";\n    }}')
 
         # Location in mesh (must be in fluid region)
         lx = (self.x_min + self.x_max) / 2
@@ -257,11 +277,12 @@ geometry
 
 castellatedMeshControls
 {{
-    maxLocalCells 1000000;
-    maxGlobalCells 5000000;
+    maxLocalCells {SNAPPY_MAX_LOCAL_CELLS};
+    maxGlobalCells {SNAPPY_MAX_GLOBAL_CELLS};
     minRefinementCells 3;
     nCellsBetweenLevels 3;
     maxLoadUnbalance 0.10;
+    allowFreeStandingZoneFaces true;
 
     features
     (
@@ -321,7 +342,6 @@ meshQualityControls
 }}
 
 mergeTolerance 1e-6;
-allowFreeStandingZoneFaces true;
 
 // ************************************************************************* //
 """
@@ -332,15 +352,8 @@ allowFreeStandingZoneFaces true;
         bike_stations = self.plan.bike_stations
         buildings = self.plan.buildings
 
-        # Probe locations at pedestrian height (z=1.5m)
-        probe_points = []
-        for bike in bike_stations:
-            cx, cy = bike.centroid
-            probe_points.append(f"        ({cx:.3f} {cy:.3f} 1.5)")
-
-        # Generate all STL patch names for function objects
-        stl_names = [b.id for b in buildings] + [b.id for b in bike_stations]
-        patches_str = " ".join(f'"{n}"' for n in stl_names)
+        # Function objects removed for OF1912 compatibility
+        # Post-processing via external scripts instead
 
         content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
@@ -376,52 +389,8 @@ runTimeModifiable true;
 
 functions
 {{
-    bikeProbes
-    {{
-        type            probes;
-        libs            (sampling);
-        writeControl    timeStep;
-        writeInterval   {WRITE_INTERVAL};
-        fields          (U p);
-        probeLocations
-        (
-{chr(10).join(probe_points) if probe_points else '        // No bike stations'}
-        );
-    }}
-
-    pedestrianPlane
-    {{
-        type            surfaces;
-        libs            (sampling);
-        writeControl    timeStep;
-        writeInterval   {WRITE_INTERVAL};
-        surfaceFormat   raw;
-        fields          (U);
-        interpolationScheme cellPoint;
-        surfaces
-        (
-            z_1.5
-            {{
-                type            cuttingPlane;
-                planeType       pointAndNormal;
-                pointAndNormalDict
-                {{
-                    point       ({(self.x_min + self.x_max)/2:.1f} {(self.y_min + self.y_max)/2:.1f} 1.5);
-                    normal      (0 0 1);
-                }};
-                interpolate     true;
-            }}
-        );
-    }}
-
-    wallShearStress
-    {{
-        type            wallShearStress;
-        libs            (fieldFunctionObjects);
-        writeControl    timeStep;
-        writeInterval   {WRITE_INTERVAL};
-        patches         ({patches_str});
-    }}
+    // Function objects disabled for OF1912 compatibility.
+    // Post-processing is handled by external Python scripts (extract_viz.py).
 }}
 
 // ************************************************************************* //
@@ -657,7 +626,7 @@ simulationType  RAS;
 
 RAS
 {
-    model           kEpsilon;
+    RASModel        kEpsilon;
     turbulence      on;
     printCoeffs     on;
 }
@@ -674,7 +643,7 @@ RAS
 
         buildings = self.plan.buildings
         bike_stations = self.plan.bike_stations
-        all_stl = [b.id for b in buildings] + [b.id for b in bike_stations]
+        all_stl = [(f"s_{b.id}" if b.id[0].isdigit() else b.id) for b in buildings] + [(f"s_{b.id}" if b.id[0].isdigit() else b.id) for b in bike_stations]
 
         # Inflow turbulence quantities
         u_in = self.wind_speed
