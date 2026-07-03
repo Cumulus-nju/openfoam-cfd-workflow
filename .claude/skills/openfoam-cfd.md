@@ -129,6 +129,43 @@ postprocess.py 提取 + 可视化
   → E:\UrbanWind\model_outputs\
 ```
 
+## CFD 自动运行脚本模板
+
+以下脚本一键执行 blockMesh → snappyHexMesh → simpleFoam：
+
+```bash
+#!/bin/bash
+# 写脚本到 WSL 内部执行（遵循 WSL 命令铁律）
+cat > /root/run_cfd.sh << 'XEOF'
+#!/bin/bash
+source /usr/share/openfoam/etc/bashrc 2>/dev/null
+CASE=/mnt/e/UrbanWind/cfd_cases/my_campus   # ← 改这里
+LOG=/mnt/e/UrbanWind/pipeline.log           # ← 改这里
+> $LOG
+exec 2>&1
+exec > >(tee -a $LOG)
+echo "=== UrbanWind CFD ==="
+echo "Started: $(date)"
+cd $CASE
+echo "=== [1/4] blockMesh ===" && blockMesh
+echo "=== [2/4] snappyHexMesh -overwrite ===" && snappyHexMesh -overwrite
+echo "=== [3/4] checkMesh ===" && checkMesh 2>&1 | tail -30
+echo "=== [4/4] simpleFoam ===" && simpleFoam
+echo "=== PIPELINE COMPLETE: $(date) ==="
+XEOF
+chmod +x /root/run_cfd.sh
+bash -l /root/run_cfd.sh
+```
+
+执行：`MSYS_NO_PATHCONV=1 wsl -d Ubuntu-24.04 bash /mnt/e/UrbanWind/run_mycampus.sh`
+
+求解完成后，后处理：
+```bash
+cd E:\UrbanWind
+python postprocess.py "E:\UrbanWind\cfd_cases\my_campus" [time]
+# 输出 → E:\UrbanWind\model_outputs\my_campus_combined.png
+```
+
 ## 可视化原则
 
 - 探头数据比网格插值数据准，柱状图用探头值
