@@ -20,6 +20,7 @@ from ..schema import (
 
 GAODE_KEY = "2ec57c587e4fe5b8652faecea9847c60"
 GAODE_SEARCH_URL = "https://restapi.amap.com/v3/place/text"
+GAODE_AROUND_URL = "https://restapi.amap.com/v3/place/around"
 GAODE_PAGE_SIZE = 25  # max per page
 
 # ── Gaode type → BuildingType mapping ──────────────────────
@@ -88,6 +89,36 @@ def _search_gaode(keywords: str, city: str = "", page: int = 1,
     except Exception:
         return None
 
+
+def _search_around(lat: float, lon: float, keywords: str, radius: int = 1500,
+                   page: int = 1) -> Optional[Dict]:
+    """Search POIs strictly within radius of a point."""
+    params = f"key={GAODE_KEY}&location={lon},{lat}&radius={radius}&keywords={quote(keywords)}&offset={GAODE_PAGE_SIZE}&page={page}&extensions=all"
+    url = f"{GAODE_AROUND_URL}?{params}"
+    try:
+        req = Request(url, headers={"User-Agent": "UrbanWind-CFD/0.1"})
+        with urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+def _search_around_all(lat: float, lon: float, keywords: str, radius: int = 1500,
+                       max_pages: int = 10) -> List[Dict]:
+    """Fetch all pages of around-search results."""
+    all_pois = []
+    for page in range(1, max_pages + 1):
+        data = _search_around(lat, lon, keywords, radius, page)
+        if not data or data.get("status") != "1":
+            break
+        pois = data.get("pois", [])
+        if not pois:
+            break
+        all_pois.extend(pois)
+        count = int(data.get("count", 0))
+        if page * GAODE_PAGE_SIZE >= count:
+            break
+        time.sleep(0.3)
+    return all_pois
 
 def _search_all_pages(keywords: str, city: str = "", lat: float = 0,
                       lon: float = 0, radius: int = 2000, max_pages: int = 10) -> List[Dict]:
@@ -188,14 +219,13 @@ class GaodeAdapter(AbstractAdapter):
         if not center_lat or not center_lon:
             raise ValueError("Could not determine location")
 
-        print(f"  Gaode: searching '{keywords}' near ({center_lat:.4f}, {center_lon:.4f})")
-
-        # Search for buildings
-        pois = _search_all_pages(keywords, city, center_lat, center_lon, radius)
+        # Use strict radius-based around search (not text search which pulls from whole city)
+        print(f"  Gaode: around search '{keywords}' at ({center_lat:.4f}, {center_lon:.4f}) r={radius}m")
+        pois = _search_around_all(center_lat, center_lon, keywords, radius)
 
         if not pois:
-            # Fallback: try broader search
-            pois = _search_all_pages("建筑", city, center_lat, center_lon, radius)
+            print(f"  Gaode: fallback text search with location bias")
+            pois = _search_all_pages(keywords, city, center_lat, center_lon, radius)
 
         print(f"  Gaode: found {len(pois)} POIs")
 
