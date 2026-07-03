@@ -162,7 +162,10 @@
             <div class="import-tab-content" id="tab-osm">
                 <div class="form-group">
                     <label>地点名称</label>
-                    <input type="text" id="osm-place" placeholder="例如：南京大学鼓楼校区">
+                    <div style="display:flex;gap:4px">
+                        <input type="text" id="osm-place" placeholder="例如：南京大学鼓楼校区" style="flex:1">
+                        <button class="btn btn-sm" onclick="flyToPlace()" title="定位到此地点" style="flex-shrink:0">🔍 定位</button>
+                    </div>
                 </div>
                 <button class="btn btn-sm" id="btn-draw-bbox" onclick="toggleDrawMode()" style="margin-bottom:8px;width:100%">
                     ✏️ 在地图上框选范围
@@ -316,6 +319,6 @@
     <!-- Leaflet Draw JS -->
     <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
     <!-- App JS -->
-    <script src="/static/js/app.js?v=7"></script>
+    <script src="/static/js/app.js?v=8"></script>
 </body>
 </html>

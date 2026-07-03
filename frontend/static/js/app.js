@@ -106,6 +106,33 @@ function initMap() {
     window._drawActive = false;
 }
 
+async function flyToPlace() {
+    const place = document.getElementById('osm-place').value.trim();
+    if (!place) { showToast('请先输入地点名称', 'error'); return; }
+    try {
+        const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(place)}&format=json&limit=1`);
+        const data = await resp.json();
+        if (data.length > 0) {
+            const lat = parseFloat(data[0].lat);
+            const lon = parseFloat(data[0].lon);
+            map.setView([lat, lon], 16);
+            // Also fill bounding box if available
+            if (data[0].boundingbox) {
+                const bb = data[0].boundingbox;
+                document.getElementById('osm-south').value = parseFloat(bb[0]).toFixed(5);
+                document.getElementById('osm-north').value = parseFloat(bb[1]).toFixed(5);
+                document.getElementById('osm-west').value = parseFloat(bb[2]).toFixed(5);
+                document.getElementById('osm-east').value = parseFloat(bb[3]).toFixed(5);
+            }
+            showToast(`已定位: ${data[0].display_name.substring(0, 60)}`, 'success');
+        } else {
+            showToast('未找到该地点', 'error');
+        }
+    } catch(e) {
+        showToast('定位失败: 网络错误', 'error');
+    }
+}
+
 function toggleDrawMode() {
     if (window._drawActive) {
         map.removeControl(window._drawControl);
