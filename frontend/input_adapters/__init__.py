@@ -5,3 +5,4 @@ from .dxf_adapter import DXFAdapter
 from .manual_adapter import ManualAdapter
 from .ms_buildings_adapter import MSBuildingsAdapter
 from .gaode_adapter import GaodeAdapter
+from .overture_adapter import OvertureAdapter

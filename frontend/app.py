@@ -27,7 +27,7 @@ import uvicorn
 
 from .config import SERVER_HOST, SERVER_PORT, STATIC_DIR, CFD_CASES_DIR, MODEL_FILE
 from .schema import SitePlan, BuildingType, SourceType, validate_site_plan
-from .input_adapters import OSMAdapter, DXFAdapter, ManualAdapter, MSBuildingsAdapter, GaodeAdapter
+from .input_adapters import OSMAdapter, DXFAdapter, ManualAdapter, MSBuildingsAdapter, GaodeAdapter, OvertureAdapter
 from .llm_engine import get_engine, GeometryInferrer, InteractiveEditor
 from .of_generator import assemble_case
 
@@ -270,6 +270,37 @@ async def import_gaode(session_id: str = Query(...), request: Dict[str, Any] = B
         }
     except Exception as e:
         logger.error(f"Gaode import failed: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/import/overture")
+async def import_overture(session_id: str = Query(...), request: Dict[str, Any] = Body(...)):
+    """
+    Import building data from Overture Maps (Microsoft + Meta + Esri).
+    Precise building footprints, global coverage. Uses local cache.
+
+    Body: {"bbox": [south, west, north, east]}
+    """
+    sess = _get_session(session_id)
+    adapter = OvertureAdapter()
+
+    try:
+        bbox = request.get("bbox")
+        if not bbox or len(bbox) != 4:
+            raise HTTPException(400, "Provide 'bbox': [south, west, north, east]")
+
+        plan = adapter.parse(bbox=tuple(bbox))
+        sess["plan"] = plan
+        sess["editor"] = InteractiveEditor(plan)
+
+        return {
+            "success": True,
+            "num_buildings": len(plan.buildings),
+            "metadata": plan.metadata,
+            "plan": plan.to_dict(),
+        }
+    except Exception as e:
+        logger.error(f"Overture import failed: {e}")
         raise HTTPException(500, str(e))
 
 

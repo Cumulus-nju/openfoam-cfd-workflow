@@ -151,11 +151,11 @@
             <!-- Tab switcher -->
             <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--bg-primary);border-radius:var(--radius-sm);padding:4px;flex-wrap:wrap">
                 <button class="btn btn-sm import-tab active" data-tab="osm" onclick="switchImportTab('osm')"
-                        style="flex:1;text-align:center;min-width:70px;background:var(--bg-tertiary)">🗺️ OSM</button>
-                <button class="btn btn-sm import-tab" data-tab="dxf" onclick="switchImportTab('dxf')"
-                        style="flex:1;text-align:center;min-width:70px">📐 DXF</button>
+                        style="flex:1;text-align:center;min-width:60px;background:var(--bg-tertiary)">🗺️ OSM</button>
+                <button class="btn btn-sm import-tab" data-tab="overture" onclick="switchImportTab('overture')"
+                        style="flex:1;text-align:center;min-width:60px">🌐 Overture</button>
                 <button class="btn btn-sm import-tab" data-tab="manual" onclick="switchImportTab('manual')"
-                        style="flex:1;text-align:center;min-width:70px">✏️ 手动</button>
+                        style="flex:1;text-align:center;min-width:60px">✏️ 手动</button>
             </div>
 
             <!-- OSM tab -->
@@ -207,6 +207,21 @@
                 <p style="font-size:11px;color:var(--text-muted)">
                     支持 AutoCAD DXF 格式。会自动识别闭合多段线为建筑轮廓，匹配附近文字注记为建筑名称/层数。
                 </p>
+            </div>
+
+            <!-- Overture tab -->
+            <div class="import-tab-content" id="tab-overture" style="display:none">
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+                    🌐 Overture Maps — 微软+Meta+Esri 建筑数据，精确轮廓，覆盖全中国。<br>
+                    首次查询较慢（下载缓存），后续秒出。
+                </p>
+                <div class="form-row">
+                    <div class="form-group"><label>南 (lat)</label><input type="number" id="ov-south" step="0.001" placeholder="32.050"></div>
+                    <div class="form-group"><label>西 (lon)</label><input type="number" id="ov-west" step="0.001" placeholder="118.770"></div>
+                    <div class="form-group"><label>北 (lat)</label><input type="number" id="ov-north" step="0.001" placeholder="32.070"></div>
+                    <div class="form-group"><label>东 (lon)</label><input type="number" id="ov-east" step="0.001" placeholder="118.790"></div>
+                </div>
+                <button class="btn btn-sm" onclick="fillOvertureFromOSM()" style="width:100%;margin-top:4px">📋 使用 OSM 输入的经纬度</button>
             </div>
 
             <!-- Manual tab -->
@@ -319,6 +334,6 @@
     <!-- Leaflet Draw JS -->
     <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
     <!-- App JS -->
-    <script src="/static/js/app.js?v=8"></script>
+    <script src="/static/js/app.js?v=9"></script>
 </body>
 </html>

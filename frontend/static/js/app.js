@@ -680,6 +680,9 @@ async function executeImport() {
         } else if (currentImportTab === 'manual') {
             updateImportProgress(10, '正在解析建筑描述...');
             await importManual();
+        } else if (currentImportTab === 'overture') {
+            updateImportProgress(10, '正在连接 Overture Maps...');
+            await importOverture();
         } else if (currentImportTab === 'msbuildings') {
             updateImportProgress(10, '正在连接 Microsoft 建筑数据...');
             await importMSBuildings();
@@ -840,6 +843,33 @@ async function importGaode() {
     console.log('Rendering done');
     const note = data.metadata?.note || '';
     showToast(`成功导入 ${data.num_buildings} 栋建筑 (高德${note ? '，' + note : ''})`, 'success');
+}
+
+function fillOvertureFromOSM() {
+    document.getElementById('ov-south').value = document.getElementById('osm-south').value;
+    document.getElementById('ov-west').value = document.getElementById('osm-west').value;
+    document.getElementById('ov-north').value = document.getElementById('osm-north').value;
+    document.getElementById('ov-east').value = document.getElementById('osm-east').value;
+    showToast('已复制 OSM 经纬度', 'success');
+}
+
+async function importOverture() {
+    const south = document.getElementById('ov-south').value;
+    const west = document.getElementById('ov-west').value;
+    const north = document.getElementById('ov-north').value;
+    const east = document.getElementById('ov-east').value;
+    if (!south || !west || !north || !east) throw new Error('请填写完整经纬度范围');
+    const body = { bbox: [parseFloat(south), parseFloat(west), parseFloat(north), parseFloat(east)] };
+    updateImportProgress(30, '正在下载 Overture 建筑数据（首次较慢）...');
+    const resp = await fetch(`/api/import/overture?session_id=${API.sessionId}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.detail);
+    API.plan = data.plan;
+    renderPlanOnMap(data.plan);
+    const cached = data.metadata?.cached ? '(缓存)' : '(新下载)';
+    showToast(`成功导入 ${data.num_buildings} 栋建筑 ${cached}`, 'success');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
