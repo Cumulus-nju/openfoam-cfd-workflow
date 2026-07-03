@@ -138,7 +138,7 @@ class DictGenerator:
         content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -253,7 +253,7 @@ mergePatchPairs
         content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -358,7 +358,7 @@ mergeTolerance 1e-6;
         content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -402,7 +402,7 @@ functions
         content = """/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -463,7 +463,7 @@ wallDist
         content = """/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -556,7 +556,7 @@ relaxationFactors
         content = """/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -584,7 +584,7 @@ errorReduction 0.75;
         content = """/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -609,7 +609,7 @@ nu              1.5e-05;
         content = """/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -662,7 +662,7 @@ RAS
         u_content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -718,7 +718,7 @@ boundaryField
         p_content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -774,7 +774,7 @@ boundaryField
         k_content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -832,7 +832,7 @@ boundaryField
         eps_content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/
@@ -890,7 +890,7 @@ boundaryField
         nut_content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                 |
+|  \\\\    /   O peration     | Version:  v1912                                 |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/

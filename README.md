@@ -69,7 +69,7 @@ python -m frontend.main
 | 磁盘 | 2GB 空闲空间 |
 | GPU | 可选（LLM 可纯 CPU 推理） |
 
-> **注意**: 运行 CFD 需要 WSL2 + OpenFOAM v2312。
+> **注意**: 运行 CFD 需要 WSL2 + OpenFOAM v1912。
 > 前端本身只需 Python，生成案例后在 WSL 中执行 `blockMesh → snappyHexMesh → simpleFoam`。
 
 ---
@@ -128,7 +128,7 @@ Phase2_CFD_ML/
 | AI 引擎 | llama.cpp + Qwen2.5-0.5B GGUF |
 | 前端 | Vanilla HTML/CSS/JS + Leaflet.js |
 | 设计 | Dark Glassmorphism, Noto Sans SC |
-| CFD 求解器 | OpenFOAM v2312 (simpleFoam, k-ε RANS) |
+| CFD 求解器 | OpenFOAM v1912 (simpleFoam, k-ε RANS) |
 
 ## License
 
