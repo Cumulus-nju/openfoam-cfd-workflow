@@ -2,7 +2,7 @@
 Generate OpenFOAM urban_block case for Phase 2 CFD-ML.
 8 buildings + 20 bike candidates in a realistic small urban block.
 Wind: north wind (from +y), 5 m/s uniform flow.
-OpenFOAM v2312 (ESI) compatible.
+OpenFOAM v1912 (ESI) compatible.
 """
 
 import os
@@ -92,11 +92,11 @@ ALL_OBS = BUILDINGS + BIKES
 # ── Helpers ───────────────────────────────────────────────────
 
 def write_foam_header(f, obj_name, class_name):
-    """Write OpenFOAM dictionary file header (v2312 format)."""
+    """Write OpenFOAM dictionary file header (v1912 format)."""
     f.write(f"""/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2312                                |
+|  \\\\    /   O peration     | Version:  v1912                                |
 |   \\\\  /    A nd           | Web:      www.openfoam.com                     |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/

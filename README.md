@@ -4,7 +4,7 @@ Urban wind field simulation pipeline: case generation → snappyHexMesh → simp
 
 ## 环境要求
 
-- WSL2 Ubuntu 22.04 + OpenFOAM v2312 (ESI, 源码编译)
+- WSL2 Ubuntu 22.04 + OpenFOAM v1912 (ESI, 源码编译)
 - Windows Python 3 + numpy, scipy, matplotlib
 - Claude Code (使用 skill)
 
@@ -37,7 +37,7 @@ generate_case.py → blockMesh → snappyHexMesh → simpleFoam
 
 `.claude/skills/openfoam-cfd.md` 包含:
 - WSL 命令执行铁律 (不用 bash -c)
-- snappyHexMesh v2312 特有坑
+- snappyHexMesh v1912 特有坑
 - BC 文件注意事项
 - 数据提取: probes / polyMesh 裸读 / foamToVTK
 - 可视化原则 (对称色标 / 探头优于插值)
