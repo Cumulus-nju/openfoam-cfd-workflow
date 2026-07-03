@@ -80,6 +80,45 @@ function initMap() {
 
     // Invalidate size after layout changes
     setTimeout(() => map.invalidateSize(), 300);
+
+    // Draw control for bbox selection
+    const drawControl = new L.Control.Draw({
+        draw: {
+            polygon: false, polyline: false, circle: false, marker: false, circlemarker: false,
+            rectangle: { shapeOptions: { color: '#06B6D4', weight: 2, fillOpacity: 0.1 } },
+        },
+        edit: false,
+    });
+    map.on(L.Draw.Event.CREATED, function(e) {
+        const bounds = e.layer.getBounds();
+        document.getElementById('osm-south').value = bounds.getSouth().toFixed(5);
+        document.getElementById('osm-west').value = bounds.getWest().toFixed(5);
+        document.getElementById('osm-north').value = bounds.getNorth().toFixed(5);
+        document.getElementById('osm-east').value = bounds.getEast().toFixed(5);
+        map.removeLayer(e.layer);
+        map.removeControl(drawControl);
+        document.getElementById('btn-draw-bbox').textContent = '✏️ 在地图上框选范围';
+        document.getElementById('btn-draw-bbox').classList.remove('active');
+        window._drawActive = false;
+        showToast('范围已填入，点击「开始导入」', 'success');
+    });
+    window._drawControl = drawControl;
+    window._drawActive = false;
+}
+
+function toggleDrawMode() {
+    if (window._drawActive) {
+        map.removeControl(window._drawControl);
+        document.getElementById('btn-draw-bbox').textContent = '✏️ 在地图上框选范围';
+        document.getElementById('btn-draw-bbox').classList.remove('active');
+        window._drawActive = false;
+    } else {
+        map.addControl(window._drawControl);
+        new L.Draw.Rectangle(map, window._drawControl.options.draw.rectangle).enable();
+        document.getElementById('btn-draw-bbox').textContent = '⏹ 停止框选';
+        document.getElementById('btn-draw-bbox').classList.add('active');
+        window._drawActive = true;
+    }
 }
 
 async function checkHealth() {

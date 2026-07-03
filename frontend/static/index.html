@@ -12,6 +12,8 @@
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Leaflet Draw CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
 
     <!-- App CSS -->
     <link rel="stylesheet" href="/static/css/app.css?v=2">
@@ -162,6 +164,9 @@
                     <label>地点名称</label>
                     <input type="text" id="osm-place" placeholder="例如：南京大学鼓楼校区">
                 </div>
+                <button class="btn btn-sm" id="btn-draw-bbox" onclick="toggleDrawMode()" style="margin-bottom:8px;width:100%">
+                    ✏️ 在地图上框选范围
+                </button>
                 <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px">
                     或手动输入经纬度范围
                 </p>
@@ -308,7 +313,9 @@
          ════════════════════════════════════════════════════════════════════ -->
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Leaflet Draw JS -->
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
     <!-- App JS -->
-    <script src="/static/js/app.js?v=6"></script>
+    <script src="/static/js/app.js?v=7"></script>
 </body>
 </html>
