@@ -2,15 +2,34 @@
 
 OpenFOAM v1912（Ubuntu 24.04 apt 安装）on WSL2。适用场景：OSM 选址 → case 生成 → snappyHexMesh → simpleFoam → 数据提取 → 可视化。
 
-最后更新：2026-07-03（新增 OF1912 兼容性、OSM 投影、网格精度、后处理）
+最后更新：2026-07-04（后处理升级：独立案例文件夹 + ML数据导出 + 坐标异常过滤）
 
-## ⚠️ WSL 命令铁律
+## ⚠️ 已知 Bug: dict_generator.py 入流速度（2026-07-04 已修复）
+
+**位置**: `frontend/of_generator/dict_generator.py:686`
+
+**Bug**: `uniform ({ux} {uy} 0)` → `ux, uy` 是 `dir_map` 返回的方向单位向量，未乘 `u_in`，导致所有 Web 前端生成的案例入流恒为 **1 m/s**（k/ε 却按正确风速算，BC 内部不一致）。
+
+**修复**: `{ux} {uy}` → `{ux * u_in} {uy * u_in}`（已 push GitHub）
+
+**影响**: 6 个 Web 前端案例。172 个参数化案例（`gen_parametric_v2.py`）不受影响。
+
+## ⚠️ SIMPLE 重启陷阱
+
+**不要**从旧 BC 的解用 `startFrom latestTime` 重启 → 残差已低，求解器秒收敛但新 BC 未传播（false convergence）。
+
+**正确做法**:
+1. 修改 BC 后，`startFrom startTime; startTime 0;`
+2. 删除旧时间目录（`rm -rf [1-9]*`）
+3. 从零运行 simpleFoam
+
+---
 
 **绝对不要** `wsl bash -c "..."` — 变量被吃、路径被翻译、中文乱码。
 
 ```bash
 # ① 写脚本到 WSL 文件系统（绕过所有转义）
-Write: \\wsl.localhost\Ubuntu-24.04\root\script.sh
+Write: \wsl.localhost\Ubuntu-24.04\root\script.sh
 
 # ② 用 login shell 执行，禁用路径翻译
 MSYS_NO_PATHCONV=1 wsl -d Ubuntu-24.04 bash -l /root/script.sh
@@ -109,11 +128,19 @@ Python 直读 `constant/polyMesh/points` + `faces` + `owner` + `neighbour`：
 - 括号匹配用深度计数（`depth += 1` / `depth -= 1`），不要用 `find(')')`
 
 ### 后处理脚本
-通用脚本 `postprocess.py`（在 `E:\UrbanWind\`）：
+通用脚本 `postprocess.py`（在 `E:\UrbanWind\scripts\`）：
 ```bash
 python postprocess.py <case_dir> [time]
 ```
-输出：CSV 切片数据 + PNG 三联图（风速热力图 + V-速度流线图 + 速度分布直方图）
+每个案例独立输出到 `E:\UrbanWind\model_outputs\<case_name>\`：
+- `wind_field_1.5m.npz` — 250×250 插值网格 (GX, GY, Ux, Uy, Uz, speed) ML 训练用
+- `npy/*.npy` — 各分量独立 .npy 文件
+- `cell_data_1.5m.csv` — z≈1.5m 原始 cell 中心数据
+- `buildings.json` — 建筑足迹 + 属性（高度/层数/面积）
+- `case_info.json` — 案例元数据 + 风速统计
+- `<case>_combined.png` — 三联图（风速热力图 + V-速度流线图 + 速度分布直方图）
+
+**坐标异常过滤**: 使用中位数参考点 + 质心距离过滤，自动排除 geojson 中跨城市异常建筑。
 
 ## 完整工作流
 
@@ -126,7 +153,7 @@ python postprocess.py <case_dir> [time]
 WSL 自动运行：blockMesh → snappyHexMesh → simpleFoam
   ↓
 postprocess.py 提取 + 可视化
-  → E:\UrbanWind\model_outputs\
+  → E:\UrbanWind\model_outputs\<case_name>\
 ```
 
 ## CFD 自动运行脚本模板
