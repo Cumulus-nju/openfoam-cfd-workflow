@@ -683,7 +683,7 @@ boundaryField
     inlet
     {{
         type            fixedValue;
-        value           uniform ({ux} {uy} 0);
+        value           uniform ({ux * u_in} {uy * u_in} 0);
     }}
     outlet
     {{
