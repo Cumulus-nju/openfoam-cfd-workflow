@@ -2,7 +2,7 @@
 
 OpenFOAM v1912（Ubuntu 24.04 apt 安装）on WSL2。适用场景：OSM 选址 → case 生成 → snappyHexMesh → simpleFoam → 数据提取 → 可视化。
 
-最后更新：2026-07-04（后处理升级：独立案例文件夹 + ML数据导出 + 坐标异常过滤）
+最后更新：2026-07-04（BC bug修复 + 后处理v2 + SIMPLE重启陷阱 + 本地/云端服务器同步）
 
 ## ⚠️ 已知 Bug: dict_generator.py 入流速度（2026-07-04 已修复）
 
