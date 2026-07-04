@@ -25,6 +25,8 @@ OpenFOAM v1912（Ubuntu 24.04 apt 安装）on WSL2。适用场景：OSM 选址 �
 
 ---
 
+## ⚠️ WSL 命令铁律
+
 **绝对不要** `wsl bash -c "..."` — 变量被吃、路径被翻译、中文乱码。
 
 ```bash
@@ -128,11 +130,11 @@ Python 直读 `constant/polyMesh/points` + `faces` + `owner` + `neighbour`：
 - 括号匹配用深度计数（`depth += 1` / `depth -= 1`），不要用 `find(')')`
 
 ### 后处理脚本
-通用脚本 `postprocess.py`（在 `E:\UrbanWind\scripts\`）：
+通用脚本 `postprocess.py`（在 `scripts/`）：
 ```bash
-python postprocess.py <case_dir> [time]
+python scripts/postprocess.py <case_dir> [time]
 ```
-每个案例独立输出到 `E:\UrbanWind\model_outputs\<case_name>\`：
+每个案例独立输出到 `model_outputs/<case_name>/`：
 - `wind_field_1.5m.npz` — 250×250 插值网格 (GX, GY, Ux, Uy, Uz, speed) ML 训练用
 - `npy/*.npy` — 各分量独立 .npy 文件
 - `cell_data_1.5m.csv` — z≈1.5m 原始 cell 中心数据
@@ -188,9 +190,8 @@ bash -l /root/run_cfd.sh
 
 求解完成后，后处理：
 ```bash
-cd E:\UrbanWind
-python postprocess.py "E:\UrbanWind\cfd_cases\my_campus" [time]
-# 输出 → E:\UrbanWind\model_outputs\my_campus_combined.png
+python scripts/postprocess.py <case_dir> [time]
+# 输出 → model_outputs/<case_name>/<case_name>_combined.png
 ```
 
 ## 可视化原则
@@ -201,7 +202,30 @@ python postprocess.py "E:\UrbanWind\cfd_cases\my_campus" [time]
 - 网格必须覆盖数据 + 建筑范围
 - geojson 坐标是 WGS84，要直接使用（CFD 域已用相同数值）
 
-## Debug 速查
+## 云端部署
+
+云服务器 `120.26.31.146`（60GB / 32核，Alibaba Cloud），SSH 密钥 `Desktop/openfoam.pem`。
+
+- 前端代码: `/opt/urbanwind/frontend/`，启动脚本 `scripts/cloud_start.sh`
+- CFD 案例: `/data/<case_name>/`
+- Web 前端: `http://120.26.31.146:8765`
+- **注意**: 代码修改后必须在云端同步重启：杀 uvicorn 进程 + 清 `__pycache__` + 重拉代码或手动修
+
+```bash
+ssh -i Desktop/openfoam.pem root@120.26.31.146
+```
+
+## 本地 vs 云端代码同步
+
+两套代码独立维护，修复 bug 时必须两边都改：
+| | 本地 | 云端 |
+|------|------|------|
+| 路径 | `D:\Phase2_CFD_ML\frontend\` | `/opt/urbanwind/frontend/` |
+| OpenFOAM | v1912 (Ubuntu 24.04) | v2312 |
+| 案例存储 | `E:\UrbanWind\cfd_cases\` | `/data/` |
+| Web 端口 | `127.0.0.1:8765` | `0.0.0.0:8765` |
+
+---
 
 | 症状 | 原因 | 修法 |
 |------|------|------|
@@ -217,3 +241,6 @@ python postprocess.py "E:\UrbanWind\cfd_cases\my_campus" [time]
 | 面索引越界 | 解析 faces 时错把顶点计数当索引 | regex 分开捕获顶点数和索引列表 |
 | `sha1` 错误 | 函数对象不兼容 | 移除 controlDict 中的 functions 块 |
 | blockMesh 卡住 | I/O 慢 | 大案例移到 WSL ext4 跑 |
+| 入流风速恒为 1 m/s | `{ux} {uy}` 缺 `* u_in` | 检查 `dict_generator.py:686`，确认已修复 |
+| SIMPLE 重启秒收敛但流场不变 | `latestTime` 重启 → false convergence | 删旧时间目录 + `startFrom startTime` 从零跑 |
+| 代码修复后不生效 | Python 进程未重启或 `__pycache__` 残留 | 杀进程 + `find . -name __pycache__ -exec rm -rf {} +` + 重启 |
