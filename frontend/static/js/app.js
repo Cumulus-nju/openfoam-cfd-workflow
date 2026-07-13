@@ -1,16 +1,17 @@
 /**
  * UrbanWind CFD — Application Controller
- *
- * Handles:
- * - Session management
- * - Map (Leaflet) integration
- * - API communication
- * - Chat interface
- * - Building list & properties panel
- * - Import/Generate modals
- * - Toast notifications
  */
 'use strict';
+
+// Debug: catch all errors
+window.onerror = function(msg, src, line, col, err) {
+    var el = document.getElementById('map');
+    if (el) {
+        el.innerHTML = '<div style=\"color:red;padding:20px;background:#111;\"><h3>JS Error</h3><pre>' +
+            msg + '\nLine: ' + line + '\n' + (err ? err.stack : '') + '</pre></div>';
+    }
+    console.error('GLOBAL ERROR:', msg, 'line', line, err);
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Global state
@@ -30,6 +31,22 @@ let chatCollapsed = false;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Initialization
+// Dynamic update button (created by JS, no HTML artifact)
+function getUpdateWindBtn() {
+    var el = document.getElementById('btn-update-wind');
+    if (!el) {
+        el = document.createElement('button');
+        el.id = 'btn-update-wind';
+        el.className = 'btn btn-success';
+        el.textContent = '更新风场';
+        el.onclick = updateWindWithTrees;
+        el.style.display = 'none';
+        var container = document.getElementById('btn-update-wind-container');
+        if (container) container.appendChild(el);
+    }
+    return el;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function init() {
@@ -47,6 +64,8 @@ async function init() {
 
     // Init map
     initMap();
+    initTreeMode();
+    getUpdateWindBtn();  // ensure button element exists
 
     // Check model status
     checkHealth();
@@ -504,6 +523,7 @@ function updateButtons(plan) {
     const hasBuildings = plan.features.some(f => f.category === 'building');
     document.getElementById('btn-enrich').disabled = !hasBuildings;
     document.getElementById('btn-generate').disabled = !hasBuildings;
+    document.getElementById('btn-tree-mode').style.display = 'none';  // shown after prediction
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -680,6 +700,9 @@ async function executeImport() {
         } else if (currentImportTab === 'manual') {
             updateImportProgress(10, '正在解析建筑描述...');
             await importManual();
+        } else if (currentImportTab === 'gaode') {
+            updateImportProgress(10, '正在连接高德地图...');
+            await importGaode();
         } else if (currentImportTab === 'overture') {
             updateImportProgress(10, '正在连接 Overture Maps...');
             await importOverture();
@@ -911,6 +934,42 @@ async function importOverture() {
     showToast(`成功导入 ${data.num_buildings} 栋建筑 ${cached}`, 'success');
 }
 
+async function flyToPlaceGaode() {
+    const place = document.getElementById('gaode-place').value.trim();
+    if (!place) { showToast('请先输入地点名称', 'error'); return; }
+    try {
+        const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(place)}&format=json&limit=1`);
+        const data = await resp.json();
+        if (data.length > 0) {
+            map.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 16);
+            showToast(`已定位: ${data[0].display_name.substring(0, 50)}`, 'success');
+        } else { showToast('未找到', 'error'); }
+    } catch(e) { showToast('定位失败', 'error'); }
+}
+
+async function importGaode() {
+    const place = document.getElementById('gaode-place').value.trim();
+    const keywords = document.getElementById('gaode-keywords').value.trim() || '学校';
+    if (!place) throw new Error('请输入地点名称');
+    const resp = await fetch(`/api/import/gaode?session_id=${API.sessionId}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ place, keywords }),
+    });
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.detail);
+    API.plan = data.plan;
+    renderPlanOnMap(data.plan);
+    // Force zoom after short delay to ensure layers are added
+    setTimeout(() => {
+        const allLayers = [...Object.values(buildingLayers)];
+        if (allLayers.length > 0) {
+            const group = L.featureGroup(allLayers);
+            map.fitBounds(group.getBounds(), { padding: [50, 50], maxZoom: 18 });
+        }
+    }, 500);
+    showToast(`成功导入 ${data.num_buildings} 栋建筑 (高德)`, 'success');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // LLM Enrichment
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1022,8 +1081,15 @@ async function executeGenerate() {
                 `目录: ${data.case_dir}\n` +
                 `WSL 路径: ${data.wsl_path}\n` +
                 `建筑: ${data.num_buildings} | 单车点: ${data.num_bikes}`;
-            showToast('案例生成成功！请在 WSL 中运行 CFD', 'success');
+            showToast('案例生成成功！', 'success');
             addChatMessage('system', msg);
+
+            // 保存 case_dir 用于预测
+            API.lastCaseDir = data.case_dir;
+            API.windDirection = body.wind_direction;
+            API.inletSpeed = body.wind_speed;
+            // 显示预测按钮
+            document.getElementById('btn-predict-case').style.display = 'inline-block';
         } else {
             showToast(`生成失败: ${data.detail}`, 'error');
         }
@@ -1137,6 +1203,321 @@ document.addEventListener('click', (e) => {
         e.target.style.display = 'none';
     }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Wind Field Prediction + Tree Placement
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let windOverlay = null;       // Leaflet canvas overlay
+let windData = null;          // last prediction result
+let treeMode = false;
+let pendingTree = null;       // tree being placed
+let placedTrees = [];         // [{cx, cy, length, angle_deg}]
+let treeMarkers = [];         // Leaflet markers for placed trees
+
+// Step-guided flow: 导入 → 智能推断/生成CFD → 风场预测 → 放置树木
+
+async function predictFromCase() {
+    if (!API.lastCaseDir) { showToast('请先生成 CFD 案例', 'warning'); return; }
+
+    // Show progress
+    var progBar = document.getElementById('predict-progress');
+    var progFill = document.getElementById('predict-progress-fill');
+    progBar.style.display = 'block';
+    progFill.style.width = '0%';
+    var progress = 0;
+    var timer = setInterval(function() {
+        progress = Math.min(progress + Math.random() * 15, 90);
+        progFill.style.width = progress + '%';
+    }, 500);
+
+    try {
+        const resp = await fetch('/api/predict-from-case', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                case_dir: API.lastCaseDir,
+                wind_direction: API.windDirection || 'N',
+                inlet_speed: API.inletSpeed || 5.0
+            })
+        });
+        clearInterval(timer);
+        progFill.style.width = '100%';
+
+        const data = await resp.json();
+        if (!data.success) { showToast(data.detail || '预测失败', 'error'); progBar.style.display = 'none'; return; }
+
+        windData = data;
+        // Show server-rendered image
+        var panel = document.getElementById('wind-panel');
+        var imgContainer = document.getElementById('wind-img-container');
+        imgContainer.innerHTML = `<img src="${data.image_base64}" style="width:100%;max-width:500px;border-radius:8px;">`;
+        panel.style.display = 'block';
+        document.getElementById('wind-speed-range').textContent =
+            `${data.speed_min.toFixed(1)} - ${data.speed_max.toFixed(1)} m/s`;
+
+        document.getElementById('btn-tree-mode').disabled = false;
+        document.getElementById('btn-tree-mode').style.display = 'inline-block';
+        showToast(`风场预测完成! 风速: ${data.speed_min.toFixed(1)}-${data.speed_max.toFixed(1)} m/s`, 'success');
+        setTimeout(function() { progBar.style.display = 'none'; }, 500);
+    } catch (e) {
+        clearInterval(timer);
+        progBar.style.display = 'none';
+        showToast('预测失败: ' + e.message, 'error');
+    }
+}
+
+async function predictWindField() {
+    // Ask for wind params first
+    const dir = prompt('风向 (N/S/E/W):', API.windDirection || 'N');
+    if (!dir) return;
+    const spd = parseFloat(prompt('入口风速 (m/s):', API.inletSpeed || '5.0'));
+    if (!spd || spd <= 0) return;
+    API.windDirection = dir.toUpperCase();
+    API.inletSpeed = spd;
+
+    showToast(`正在 GNN 预测 (${API.windDirection}风 ${API.inletSpeed} m/s)...`, 'info');
+    try {
+        const resp = await fetch(`/api/predict-wind?session_id=${API.sessionId}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                wind_direction: API.windDirection,
+                inlet_speed: API.inletSpeed
+            })
+        });
+        const data = await resp.json();
+        if (!data.success) { showToast(data.detail || '预测失败', 'error'); return; }
+        windData = data;
+        renderWindOverlay(data);
+        document.getElementById('btn-update-wind').style.display = 'inline-block';
+        showToast(`风场预测完成! 风速范围: ${data.speed_min.toFixed(1)} - ${data.speed_max.toFixed(1)} m/s`, 'success');
+    } catch (e) {
+        showToast('预测失败: ' + e.message, 'error');
+    }
+}
+
+function renderWindOverlay(data) {
+    if (windOverlay) { map.removeLayer(windOverlay); }
+    if (window._windCanvas) { window._windCanvas.remove(); }
+
+    const grid = data.speed_grid;
+    const H = grid.length, W = grid[0].length;
+    const vmin = data.speed_min, vmax = data.speed_max, vrange = vmax - vmin || 1;
+
+    // Render to canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.createImageData(W, H);
+
+    for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+            const v = grid[y][x];
+            const idx = (y * W + x) * 4;
+            if (v === null || v === undefined || isNaN(v)) {
+                imgData.data[idx+3] = 0;
+            } else {
+                const t = Math.max(0, Math.min(1, (v - vmin) / vrange));
+                let r, g, b;
+                if (t < 0.33) { const s=t/0.33; r=30; g=100+Math.round(155*s); b=200+Math.round(55*s); }
+                else if (t < 0.66) { const s=(t-0.33)/0.33; r=30+Math.round(225*s); g=255-Math.round(55*s); b=255-Math.round(200*s); }
+                else { const s=(t-0.66)/0.34; r=255; g=200-Math.round(150*s); b=55-Math.round(55*s); }
+                imgData.data[idx+0] = r; imgData.data[idx+1] = g; imgData.data[idx+2] = b;
+                imgData.data[idx+3] = 140;
+            }
+        }
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    // Use API lat/lng bounds for geo-referencing (same coords as buildings)
+    let bounds;
+    if (data.grid_bounds_latlng) {
+        const b = data.grid_bounds_latlng; // [min_lng, min_lat, max_lng, max_lat]
+        bounds = [[b[1], b[0]], [b[3], b[2]]]; // [[south, west], [north, east]]
+    } else {
+        // Fallback: use map center + local grid size
+        const c = map.getCenter();
+        const b = data.grid_bounds; // [x_min, y_min, x_max, y_max] in local meters
+        const dx = (b[2] - b[0]) / 111320 / Math.cos(c.lat * Math.PI/180);
+        const dy = (b[3] - b[1]) / 111320;
+        bounds = [[c.lat - dy/2, c.lng - dx/2], [c.lat + dy/2, c.lng + dx/2]];
+    }
+    // Show in sidebar panel (no map alignment needed)
+    var panel = document.getElementById('wind-panel');
+    var imgContainer = document.getElementById('wind-img-container');
+    imgContainer.innerHTML = '';
+    imgContainer.appendChild(canvas);
+    panel.style.display = 'block';
+    document.getElementById('wind-speed-range').textContent =
+        (data.speed_min || 0).toFixed(1) + ' - ' + (data.speed_max || 0).toFixed(1) + ' m/s';
+    // Also add as map overlay for reference
+    if (data.grid_bounds_latlng) {
+        var lb = data.grid_bounds_latlng;
+        windOverlay = L.imageOverlay(canvas.toDataURL(), [[lb[1], lb[0]], [lb[3], lb[2]]], {opacity: 0.4}).addTo(map);
+    }
+
+    // Show colorbar
+    document.getElementById('wind-colorbar').style.display = 'flex';
+    document.getElementById('colorbar-min').textContent = vmin.toFixed(1);
+    document.getElementById('colorbar-max').textContent = vmax.toFixed(1);
+    drawColorbar(vmin, vmax);
+}
+
+function drawColorbar(vmin, vmax) {
+    const c = document.getElementById('colorbar-canvas');
+    const ctx = c.getContext('2d');
+    for (let i = 0; i < 200; i++) {
+        const t = 1 - i / 199;
+        let r, g, b;
+        if (t < 0.33) { const s=t/0.33; r=30; g=100+Math.round(155*s); b=200+Math.round(55*s); }
+        else if (t < 0.66) { const s=(t-0.33)/0.33; r=30+Math.round(225*s); g=255-Math.round(55*s); b=255-Math.round(200*s); }
+        else { const s=(t-0.66)/0.34; r=255; g=200-Math.round(150*s); b=55-Math.round(55*s); }
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(0, i, 20, 1);
+    }
+}
+
+// ── Tree placement ───────────────────────────────────────────────────────
+
+function toggleTreeMode() {
+    treeMode = !treeMode;
+    const btn = document.getElementById('btn-tree-mode');
+    btn.classList.toggle('active', treeMode);
+    map.getContainer().style.cursor = treeMode ? 'crosshair' : '';
+    if (!treeMode) { cancelTree(); }
+}
+
+function initTreeMode() {
+if (!map) return;
+map.on('click', function(e) {
+    if (!treeMode) return;
+    const popup = document.getElementById('tree-popup');
+    popup.style.display = 'block';
+    // Position near click, clamped to viewport
+    const x = Math.min(e.originalEvent.clientX, window.innerWidth - 250);
+    const y = Math.min(e.originalEvent.clientY, window.innerHeight - 200);
+    popup.style.left = x + 'px';
+    popup.style.top = y + 'px';
+    pendingTree = { cx: e.latlng.lng, cy: e.latlng.lat };
+    document.getElementById('tree-length').value = 20;
+    document.getElementById('tree-angle').value = 0;
+    document.getElementById('tree-length-val').textContent = '20m';
+    document.getElementById('tree-angle-val').textContent = '0°';
+});
+
+document.getElementById('tree-length').addEventListener('input', function() {
+    document.getElementById('tree-length-val').textContent = this.value + 'm';
+});
+document.getElementById('tree-angle').addEventListener('input', function() {
+    document.getElementById('tree-angle-val').textContent = this.value + '°';
+});
+
+// Tree popup buttons (bound inside initTreeMode for scope access)
+var btnConfirm = document.getElementById('btn-confirm-tree');
+var btnCancel = document.getElementById('btn-cancel-tree');
+if (btnConfirm) btnConfirm.addEventListener('click', function() {
+    if (!pendingTree) return;
+    var len = parseFloat(document.getElementById('tree-length').value);
+    var theta = parseFloat(document.getElementById('tree-angle').value);
+    placedTrees.push({ cx: pendingTree.cx, cy: pendingTree.cy, length: len, angle_deg: theta });
+    drawPlacedTrees();
+    document.getElementById('tree-popup').style.display = 'none';
+    document.getElementById('btn-save-trees').style.display = 'inline-block';
+    document.getElementById('btn-update-wind').style.display = 'none';
+    pendingTree = null;
+    showToast('Placed tree: ' + len + 'm, ' + theta + '°', 'info');
+});
+if (btnCancel) btnCancel.addEventListener('click', function() {
+    document.getElementById('tree-popup').style.display = 'none';
+    pendingTree = null;
+});
+}  // end initTreeMode
+
+
+function confirmTree() {
+    if (!pendingTree) return;
+    const len = parseFloat(document.getElementById('tree-length').value);
+    const theta = parseFloat(document.getElementById('tree-angle').value);
+    placedTrees.push({ cx: pendingTree.cx, cy: pendingTree.cy, length: len, angle_deg: theta });
+    drawPlacedTrees();
+    document.getElementById('tree-popup').style.display = 'none';
+    pendingTree = null;
+    document.getElementById('btn-save-trees').style.display = 'inline-block';
+    showToast(`放置了 ${len}m 行道树 (θ=${theta}°)，点击"保存树木"`, 'info');
+}
+
+function cancelTree() {
+    document.getElementById('tree-popup').style.display = 'none';
+    pendingTree = null;
+}
+
+function drawPlacedTrees() {
+    treeMarkers.forEach(m => map.removeLayer(m));
+    treeMarkers = [];
+    placedTrees.forEach((t, i) => {
+        const rad = t.angle_deg * Math.PI / 180;
+        const halfLen = t.length / 2;
+        // Convert meters to lat/lng
+        const latlng = L.latLng(t.cy, t.cx);
+        // Approximate: 1m ≈ 1/111320 deg lat, 1/111320*cos(lat) deg lng
+        const cosLat = Math.cos(t.cy * Math.PI / 180);
+        const dLat = halfLen * Math.cos(rad) / 111320;
+        const dLng = halfLen * Math.sin(rad) / (111320 * cosLat);
+        const p1 = L.latLng(t.cy - dLat, t.cx - dLng);
+        const p2 = L.latLng(t.cy + dLat, t.cx + dLng);
+        const line = L.polyline([p1, p2], {
+            color: '#22c55e', weight: 4, opacity: 0.8,
+            dashArray: '10 5'
+        }).addTo(map);
+        line.bindTooltip(`🌳 ${t.length}m / θ=${t.angle_deg}°`, {permanent: false});
+        treeMarkers.push(line);
+    });
+}
+
+async function saveTreesToCase() {
+    if (!API.lastCaseDir) { showToast('请先生成 CFD 案例', 'warning'); return; }
+    if (placedTrees.length === 0) { showToast('请先在图上放置树木', 'warning'); return; }
+    try {
+        const resp = await fetch('/api/save-trees', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                case_dir: API.lastCaseDir,
+                wind_direction: API.windDirection || 'N',
+                inlet_speed: API.inletSpeed || 5.0,
+                trees: placedTrees,
+            })
+        });
+        const data = await resp.json();
+        if (!data.success) { showToast(data.detail || '保存失败', 'error'); return; }
+        document.getElementById('btn-update-wind').style.display = 'inline-block';
+        showToast(`树木已保存 (${data.num_trees} 排)，点击"更新风场"`, 'success');
+    } catch (e) { showToast('保存失败: ' + e.message, 'error'); }
+}
+
+async function updateWindWithTrees() {
+    if (!API.lastCaseDir) { showToast('请先生成 CFD 案例', 'warning'); return; }
+    showToast('正在计算参数化修正...', 'info');
+    try {
+        const resp = await fetch('/api/correct-from-case', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                case_dir: API.lastCaseDir,
+                wind_direction: API.windDirection || 'N',
+                inlet_speed: API.inletSpeed || 5.0,
+            })
+        });
+        const data = await resp.json();
+        if (!data.success) { showToast(data.detail || '修正失败', 'error'); return; }
+        windData = data;
+        var imgContainer = document.getElementById('wind-img-container');
+        imgContainer.innerHTML = `<img src="${data.image_base64}" style="width:100%;max-width:500px;border-radius:8px;">`;
+        document.getElementById('wind-speed-range').textContent =
+            `${data.speed_min.toFixed(1)} - ${data.speed_max.toFixed(1)} m/s`;
+        showToast(`修正完成! ${data.num_trees} 排树 | 风速: ${data.speed_min.toFixed(1)}-${data.speed_max.toFixed(1)} m/s`, 'success');
+    } catch (e) { showToast('修正失败: ' + e.message, 'error'); }
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Startup

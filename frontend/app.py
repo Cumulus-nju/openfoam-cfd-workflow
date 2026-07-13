@@ -14,9 +14,11 @@ import asyncio
 import json
 import logging
 import shutil
+import tempfile
 import threading
 import time
 import uuid
+import numpy as np
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -508,7 +510,7 @@ async def generate_case(session_id: str = Query(...), request: Dict[str, Any] = 
         wsl_path = f"/mnt/{wsl_drive}/" + str(case_dir)[2:].replace("\\", "/")
         return {
             "success": True,
-            "case_dir": str(case_dir),
+            "case_dir": str(case_dir).replace("\\", "/"),
             "wsl_path": wsl_path,
             "num_buildings": len(plan.buildings),
             "num_bikes": len(plan.bike_stations),
@@ -615,6 +617,406 @@ if (STATIC_DIR / "css").exists():
     app.mount("/static/css", StaticFiles(directory=str(STATIC_DIR / "css")), name="css")
 if (STATIC_DIR / "js").exists():
     app.mount("/static/js", StaticFiles(directory=str(STATIC_DIR / "js")), name="js")
+
+
+# ── GNN 风场预测 ────────────────────────────────────────────────────────────
+
+
+@app.post("/api/predict-from-case")
+async def predict_from_case(request: Dict[str, Any] = Body(...)):
+    """
+    从已生成的 CFD case 直接预测风场。
+    Body: {case_dir: "E:/UrbanWind/cfd_cases/my_case"}
+    """
+    import traceback as _tb
+    try:
+        case_dir_raw = str(request.get("case_dir", ""))
+        logger.info(f"predict-from-case: case_dir={case_dir_raw}")
+        case_dir = Path(case_dir_raw.replace("\\", "/"))
+        if not case_dir.exists():
+            raise HTTPException(400, f"案例目录不存在: {case_dir}")
+
+        geojson_path = case_dir / "site_plan.geojson"
+        if not geojson_path.exists():
+            raise HTTPException(400, f"案例中没有 site_plan.geojson，目录内容: {list(case_dir.iterdir())}")
+
+        with open(geojson_path, encoding='utf-8') as f:
+            geojson = json.load(f)
+
+        buildings_local = []
+        for feat in geojson.get("features", []):
+            if feat.get("category") != "building":
+                continue
+            coords = feat.get("geometry", {}).get("coordinates", [[]])[0]
+            if not coords: continue
+            props = feat.get("properties", {})
+            h = props.get("height") or props.get("inferred_height") or 10.0
+            buildings_local.append({"polygon_local": [[p[0], p[1]] for p in coords], "height": float(h)})
+
+        if not buildings_local:
+            raise HTTPException(400, "案例中没有建筑数据")
+        logger.info(f"predict-from-case: {len(buildings_local)} buildings, predicting...")
+
+        wind_dir = request.get("wind_direction", "N")
+        inlet_speed = float(request.get("inlet_speed", 5.0))
+
+        all_x = [p[0] for b in buildings_local for p in b["polygon_local"]]
+        all_y = [p[1] for b in buildings_local for p in b["polygon_local"]]
+
+        # Auto-detect: if mean abs coord > 10, it's lat/lng (e.g. 116, 40)
+        x_mean = (max(all_x) + min(all_x)) / 2
+        if abs(x_mean) > 10:  # lat/lng like 116.3
+            lon0 = (min(all_x) + max(all_x)) / 2
+            lat0 = (min(all_y) + max(all_y)) / 2
+            cos_lat = np.cos(np.radians(lat0))
+            m_per_deg_lng = 111320.0 * max(cos_lat, 0.3)
+            m_per_deg_lat = 111320.0
+            # Convert to local meters
+            buildings_local = [{
+                "polygon_local": [((p[0]-lon0)*m_per_deg_lng, (p[1]-lat0)*m_per_deg_lat) for p in b["polygon_local"]],
+                "height": b["height"]
+            } for b in buildings_local]
+            all_x = [p[0] for b in buildings_local for p in b["polygon_local"]]
+            all_y = [p[1] for b in buildings_local for p in b["polygon_local"]]
+
+        margin = max(40, (max(all_x)-min(all_x)) * 0.3)
+        grid_size = 250
+        grid_x = np.linspace(min(all_x)-margin, max(all_x)+margin, grid_size)
+        grid_y = np.linspace(max(all_y)+margin, min(all_y)-margin, grid_size)
+
+        predictor = _get_predictor()
+        if predictor is None:
+            raise HTTPException(503, "GNN 模型未就绪")
+
+        Ux, Uy, speed = predictor.predict(buildings_local, wind_dir, inlet_speed, grid_x, grid_y)
+
+        def nan_to_none(arr):
+            return [[None if np.isnan(v) else float(v) for v in row] for row in arr]
+
+        logger.info(f"predict-from-case: OK, speed {np.nanmin(speed):.1f}-{np.nanmax(speed):.1f}")
+
+        # 服务端渲染为 PNG，返回 base64
+        import base64, io as _io
+        from matplotlib.figure import Figure
+        fig = Figure(figsize=(5, 5), dpi=80)
+        ax = fig.add_subplot(111)
+        vmin, vmax = float(np.nanmin(speed)), float(np.nanmax(speed))
+        speed_masked = np.where(np.isnan(speed), np.nan, speed)
+        im = ax.imshow(speed_masked, cmap='turbo', vmin=vmin, vmax=vmax, origin='upper',
+                        extent=[0, grid_size, grid_size, 0])
+        ax.set_xticks([]); ax.set_yticks([])
+        fig.colorbar(im, ax=ax, label='Wind Speed (m/s)', shrink=0.8)
+        buf = _io.BytesIO()
+        fig.savefig(buf, format='png', dpi=80, bbox_inches='tight', pad_inches=0.1)
+        buf.seek(0)
+        img_b64 = base64.b64encode(buf.read()).decode('utf-8')
+        import matplotlib.pyplot as _plt; _plt.close(fig)
+
+        return {
+            "success": True,
+            "case_dir": str(case_dir),
+            "speed_min": vmin,
+            "speed_max": vmax,
+            "image_base64": f"data:image/png;base64,{img_b64}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"predict-from-case CRASH: {e}\n{_tb.format_exc()}")
+        raise HTTPException(500, f"预测失败: {e}")
+
+
+# ── 树列保存 ─────────────────────────────────────────────────────────────────
+
+
+@app.post("/api/save-trees")
+async def save_trees(request: Dict[str, Any] = Body(...)):
+    """保存树列位置到 case/trees.json。"""
+    case_dir = Path(str(request.get("case_dir", "")).replace("\\", "/"))
+    if not case_dir.exists():
+        raise HTTPException(400, f"案例不存在: {case_dir}")
+    trees_data = request.get("trees", [])
+    trees_path = case_dir / "trees.json"
+    with open(trees_path, 'w', encoding='utf-8') as f:
+        json.dump({"trees": trees_data, "wind_direction": request.get("wind_direction", "N"),
+                    "inlet_speed": request.get("inlet_speed", 5.0)}, f, ensure_ascii=False, indent=2)
+    logger.info(f"save-trees: {len(trees_data)} trees -> {trees_path}")
+    return {"success": True, "num_trees": len(trees_data)}
+
+
+# ── 树列修正（从 case 读 trees.json）─────────────────────────────────────────
+
+
+@app.post("/api/correct-from-case")
+async def correct_from_case(request: Dict[str, Any] = Body(...)):
+    """
+    从 case + 树列参数重新预测并修正风场。
+    Body: {case_dir, wind_direction, inlet_speed, trees: [{cx, cy, length, angle_deg}]}
+    """
+    case_dir = Path(str(request.get("case_dir", "")).replace("\\", "/"))
+    if not case_dir.exists():
+        raise HTTPException(400, f"案例不存在: {case_dir}")
+
+    wind_dir = request.get("wind_direction", "N")
+    inlet_speed = float(request.get("inlet_speed", 5.0))
+    wd_map = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
+    wdx, wdy = wd_map.get(wind_dir, (0, 1))
+
+    # 从 trees.json 读取（由 /api/save-trees 写入）
+    trees_path = case_dir / "trees.json"
+    trees_data = []
+    if trees_path.exists():
+        with open(trees_path, encoding='utf-8') as f:
+            trees_data = json.load(f).get("trees", [])
+
+    # 从 case 读取建筑 + 预测 + 修正（和 predict-from-case 相同流程）
+    geojson_path = case_dir / "site_plan.geojson"
+    if not geojson_path.exists():
+        raise HTTPException(400, "案例中没有 site_plan.geojson")
+
+    with open(geojson_path, encoding='utf-8') as f:
+        geojson = json.load(f)
+
+    buildings_local = []
+    for feat in geojson.get("features", []):
+        if feat.get("category") != "building": continue
+        coords = feat.get("geometry", {}).get("coordinates", [[]])[0]
+        if not coords: continue
+        h = feat.get("properties", {}).get("height") or 10.0
+        buildings_local.append({"polygon_local": [[p[0], p[1]] for p in coords], "height": float(h)})
+
+    # Coordinate conversion params (used for buildings AND trees)
+    _lon0, _lat0, _m_lng, _m_lat = 0.0, 0.0, 1.0, 1.0
+    all_x = [p[0] for b in buildings_local for p in b["polygon_local"]]
+    all_y = [p[1] for b in buildings_local for p in b["polygon_local"]]
+    x_mean = (max(all_x) + min(all_x)) / 2
+    if abs(x_mean) > 10:
+        _lon0 = (min(all_x) + max(all_x)) / 2; _lat0 = (min(all_y) + max(all_y)) / 2
+        cos_lat = np.cos(np.radians(_lat0))
+        _m_lng = 111320.0 * max(cos_lat, 0.3); _m_lat = 111320.0
+        buildings_local = [{"polygon_local": [((p[0]-_lon0)*_m_lng, (p[1]-_lat0)*_m_lat) for p in b["polygon_local"]], "height": b["height"]} for b in buildings_local]
+        all_x = [p[0] for b in buildings_local for p in b["polygon_local"]]
+        all_y = [p[1] for b in buildings_local for p in b["polygon_local"]]
+
+    margin = max(40, (max(all_x)-min(all_x))*0.3)
+    grid_size = 250
+    grid_x = np.linspace(min(all_x)-margin, max(all_x)+margin, grid_size)
+    grid_y = np.linspace(max(all_y)+margin, min(all_y)-margin, grid_size)
+
+    predictor = _get_predictor()
+    if predictor is None: raise HTTPException(503, "GNN 模型未就绪")
+
+    Ux, Uy, speed = predictor.predict(buildings_local, wind_dir, inlet_speed, grid_x, grid_y)
+
+    # 参数化树列修正（树坐标用和建筑相同的转换）
+    from .param_correction import TreeRow, apply_tree_correction
+    trees = [TreeRow(
+        cx=(t["cx"] - _lon0) * _m_lng,
+        cy=(t["cy"] - _lat0) * _m_lat,
+        length=t.get("length", 20),
+        angle_deg=t.get("angle_deg", 0)
+    ) for t in trees_data]
+    if trees:
+        Ux_c, Uy_c, speed_c = apply_tree_correction(
+            Ux, Uy, speed, grid_x, grid_y, trees, (wdx, wdy), inlet_speed)
+    else:
+        speed_c = speed
+
+    # 渲染图片
+    import base64, io as _io
+    from matplotlib.figure import Figure
+    fig = Figure(figsize=(5, 5), dpi=80)
+    ax = fig.add_subplot(111)
+    vmin, vmax = float(np.nanmin(speed_c)), float(np.nanmax(speed_c))
+    speed_c_masked = np.where(np.isnan(speed_c), np.nan, speed_c)
+    im = ax.imshow(speed_c_masked, cmap='turbo', vmin=vmin, vmax=vmax, origin='upper',
+                    extent=[0, grid_size, grid_size, 0])
+    ax.set_xticks([]); ax.set_yticks([])
+    fig.colorbar(im, ax=ax, label='Wind Speed (m/s)', shrink=0.8)
+    buf = _io.BytesIO()
+    fig.savefig(buf, format='png', dpi=80, bbox_inches='tight', pad_inches=0.1)
+    buf.seek(0)
+    img_b64 = base64.b64encode(buf.read()).decode('utf-8')
+    import matplotlib.pyplot as _plt; _plt.close(fig)
+
+    return {
+        "success": True,
+        "case_dir": str(case_dir),
+        "speed_min": vmin,
+        "speed_max": vmax,
+        "image_base64": f"data:image/png;base64,{img_b64}",
+        "num_trees": len(trees),
+    }
+
+
+# ── 旧 predict 端点（保留兼容） ─────────────────────────────────────────────
+
+# Lazy-loaded GNN predictor (loaded on first use to save RAM)
+_gnn_predictor = None
+_gnn_checkpoint = Path(r"E:\UrbanWind\gnn\checkpoints\stage1_best.pt")
+
+
+def _get_predictor():
+    """延迟加载 GNN 模型（首次调用时加载，节省内存）。"""
+    global _gnn_predictor
+    if _gnn_predictor is None:
+        from .gnn_predictor import GNNSurrogate
+        if _gnn_checkpoint.exists():
+            _gnn_predictor = GNNSurrogate(_gnn_checkpoint)
+            logger.info("GNN predictor loaded")
+        else:
+            logger.warning(f"GNN checkpoint not found: {_gnn_checkpoint}")
+            return None
+    return _gnn_predictor
+
+
+@app.post("/api/predict-wind")
+async def predict_wind(session_id: str = Query(...), request: Dict[str, Any] = Body(...)):
+    """
+    GNN 快速风场预测。
+    Body: {wind_direction: "N", inlet_speed: 5.0}
+    """
+    sess = _get_session(session_id)
+    plan = sess.get("plan")
+    logger.info(f"predict-wind: session={session_id[:8]}..., plan={'OK' if plan else 'NONE'}")
+
+    if plan is None:
+        raise HTTPException(400, "请先导入建筑数据")
+
+    predictor = _get_predictor()
+    if predictor is None:
+        raise HTTPException(503, "GNN 模型未就绪，请等待训练完成")
+
+    wind_dir = request.get("wind_direction", "N")
+    inlet_speed = float(request.get("inlet_speed", 5.0))
+
+    # Write debug info to file
+    import datetime as _dt
+    _debug_log = Path("D:/Phase2_CFD_ML/predict_debug.log")
+    try:
+        _debug_log.write_text(
+            f"[{_dt.datetime.now()}] session={session_id} wind={wind_dir} speed={inlet_speed}\n"
+            f"  plan type: {type(plan).__name__}, buildings: {len(plan.buildings)}\n"
+            f"  first bld coords: {plan.buildings[0].geometry.coordinates[0][:2] if plan.buildings else 'N/A'}\n",
+            encoding='utf-8')
+    except Exception as _e:
+        _debug_log.write_text(f"[{_dt.datetime.now()}] DEBUG WRITE ERROR: {_e}\n", encoding='utf-8')
+
+    # 保存 plan 为 geojson，从中提取建筑（确保坐标格式一致）
+    import tempfile, uuid as _uuid, traceback as _tb
+    tmp_dir = Path(tempfile.gettempdir()) / "urbanwind_predict"
+    tmp_dir.mkdir(exist_ok=True)
+    geojson_path = tmp_dir / f"plan_{_uuid.uuid4().hex[:8]}.geojson"
+    try:
+        plan.to_file(geojson_path)
+    except Exception as e:
+        logger.error(f"to_file failed: {e}\n{_tb.format_exc()}")
+        raise HTTPException(500, f"导出geojson失败: {e}")
+
+    with open(geojson_path) as f:
+        geojson = json.load(f)
+
+    # 从 geojson 提取建筑 footprint 和 domain
+    buildings_local = []
+    for feat in geojson.get("features", []):
+        if feat.get("category") != "building":
+            continue
+        coords = feat.get("geometry", {}).get("coordinates", [[]])[0]
+        if not coords: continue
+        props = feat.get("properties", {})
+        h = props.get("height") or props.get("inferred_height") or 10.0
+        buildings_local.append({"polygon_local": [[p[0], p[1]] for p in coords], "height": float(h)})
+
+    if not buildings_local:
+        raise HTTPException(400, "没有有效的建筑数据")
+
+    # 从 buildings 计算网格
+    all_x = [p[0] for b in buildings_local for p in b["polygon_local"]]
+    all_y = [p[1] for b in buildings_local for p in b["polygon_local"]]
+    margin = max(40, (max(all_x)-min(all_x)) * 0.3)
+    x_min = min(all_x) - margin
+    x_max = max(all_x) + margin
+    y_min = min(all_y) - margin
+    y_max = max(all_y) + margin
+
+    grid_size = 250
+    grid_x = np.linspace(x_min, x_max, grid_size)
+    grid_y = np.linspace(y_max, y_min, grid_size)
+
+    # GNN 推理
+    Ux, Uy, speed = predictor.predict(buildings_local, wind_dir, inlet_speed, grid_x, grid_y)
+
+    # 用于地图叠图的 bounds（同坐标系）
+    latlng_bounds = [x_min, y_min, x_max, y_max]
+
+    def nan_to_none(arr):
+        return [[None if np.isnan(v) else float(v) for v in row] for row in arr]
+
+    return {
+        "success": True,
+        "grid_bounds": [x_min, y_min, x_max, y_max],
+        "grid_bounds_latlng": latlng_bounds,
+        "grid_size": grid_size,
+        "speed_min": float(np.nanmin(speed)),
+        "speed_max": float(np.nanmax(speed)),
+        "speed_grid": nan_to_none(speed),
+        "Ux_grid": nan_to_none(Ux),
+        "Uy_grid": nan_to_none(Uy),
+    }
+
+
+@app.post("/api/correct-wind")
+async def correct_wind(session_id: str = Query(...), request: Dict[str, Any] = Body(...)):
+    """
+    在 GNN 风场上叠加树列参数化修正。
+    Body: {
+        wind_direction: "N", inlet_speed: 5.0,
+        trees: [{cx, cy, length, angle_deg}, ...],
+        base_prediction: {...}  // 上次 /predict-wind 的返回值
+    }
+    """
+    from .param_correction import TreeRow, apply_tree_correction
+
+    base = request.get("base_prediction")
+    if base is None:
+        raise HTTPException(400, "需要 base_prediction（先调用 /api/predict-wind）")
+
+    wind_dir = request.get("wind_direction", "N")
+    inlet_speed = float(request.get("inlet_speed", 5.0))
+
+    wd_map = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
+    wd = wd_map.get(wind_dir, (0, 1))
+
+    bounds = base["grid_bounds"]
+    grid_size = base["grid_size"]
+    grid_x = np.linspace(bounds[0], bounds[2], grid_size)
+    grid_y = np.linspace(bounds[3], bounds[1], grid_size)
+
+    Ux_base = np.array(base["Ux_grid"], dtype=np.float32)
+    Uy_base = np.array(base["Uy_grid"], dtype=np.float32)
+    speed_base = np.array(base["speed_grid"], dtype=np.float32)
+
+    trees = [TreeRow(
+        cx=t["cx"], cy=t["cy"],
+        length=t.get("length", 20),
+        angle_deg=t.get("angle_deg", 0),
+    ) for t in request.get("trees", [])]
+
+    Ux_c, Uy_c, speed_c = apply_tree_correction(
+        Ux_base, Uy_base, speed_base, grid_x, grid_y,
+        trees, wd, inlet_speed)
+
+    return {
+        "success": True,
+        "grid_bounds": bounds,
+        "grid_size": grid_size,
+        "speed_min": float(np.nanmin(speed_c)),
+        "speed_max": float(np.nanmax(speed_c)),
+        "speed_grid": speed_c.tolist(),
+        "Ux_grid": Ux_c.tolist(),
+        "Uy_grid": Uy_c.tolist(),
+        "num_trees": len(trees),
+    }
 
 
 # ── Startup ──────────────────────────────────────────────────────────────────

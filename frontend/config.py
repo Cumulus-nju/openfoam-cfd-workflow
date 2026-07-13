@@ -60,12 +60,15 @@ WRITE_INTERVAL = 100
 
 # ── OSM Defaults ─────────────────────────────────────────────────────────────
 
-OSM_OVERPASS_URL = "https://z.overpass-api.de/api/interpreter"
+OSM_OVERPASS_URL = "https://overpass.nchc.org.tw/api/interpreter"
 OSM_OVERPASS_FALLBACKS = [
+    "https://z.overpass-api.de/api/interpreter",
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.openstreetmap.ru/api/interpreter",
+    "https://overpass.osm.ch/api/interpreter",
 ]
-OSM_TIMEOUT = 60  # seconds
+OSM_TIMEOUT = 90  # seconds (increased for slow connections)
 
 # ── Server ───────────────────────────────────────────────────────────────────
 

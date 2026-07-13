@@ -992,23 +992,23 @@ boundaryField
 
     def _inlet_face(self) -> str:
         if self.wind_direction == "N":
-            return "(3 7 6 2)"
+            return "(3 7 6 2)"  # north face (max y)
         elif self.wind_direction == "S":
-            return "(0 1 5 4)"
+            return "(0 1 5 4)"  # south face (min y)
         elif self.wind_direction == "E":
-            return "(0 4 7 3)"
+            return "(0 4 7 3)"  # west face (min x) — zeroGradient outlet on east lets flow in
         else:  # W
-            return "(1 2 6 5)"
+            return "(1 2 6 5)"  # east face (max x) — zeroGradient outlet on west lets flow in
 
     def _outlet_face(self) -> str:
         if self.wind_direction == "N":
-            return "(0 1 5 4)"
+            return "(0 1 5 4)"  # south face
         elif self.wind_direction == "S":
-            return "(3 7 6 2)"
+            return "(3 7 6 2)"  # north face
         elif self.wind_direction == "E":
-            return "(1 2 6 5)"
+            return "(1 2 6 5)"  # east face
         else:  # W
-            return "(0 4 7 3)"
+            return "(0 4 7 3)"  # west face
 
     def _side_faces(self) -> str:
         if self.wind_direction in ("N", "S"):

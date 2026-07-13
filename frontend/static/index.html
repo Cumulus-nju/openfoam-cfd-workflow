@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
 
     <!-- App CSS -->
-    <link rel="stylesheet" href="/static/css/app.css?v=2">
+    <link rel="stylesheet" href="/static/css/app.css?v=3">
 
     <!-- Preload SVG icons as inline sprite -->
 </head>
@@ -51,6 +51,13 @@
                     </svg>
                     生成CFD案例
                 </button>
+                <span class="toolbar-divider"></span>
+                <button class="btn" id="btn-tree-mode" onclick="toggleTreeMode()" style="display:none" title="放置行道树等参数化特征">
+                    🌳 放置树木
+                </button>
+                <button class="btn btn-accent" id="btn-predict-case" style="display:none" onclick="predictFromCase()" title="从CFD案例预测风场">🌪 预测风场</button>
+                <button class="btn" id="btn-save-trees" onclick="saveTreesToCase()" style="display:none" title="保存树木到案例">💾 保存树木</button>
+                <span id="btn-update-wind-container"></span>
             </div>
         </header>
 
@@ -73,11 +80,35 @@
                     <button class="btn btn-sm btn-danger" id="btn-delete-building" style="display:none" onclick="deleteSelectedBuilding()">删除建筑</button>
                 </div>
             </div>
+            <!-- Wind prediction panel -->
+            <div id="predict-progress" style="display:none; margin:8px 0; background:rgba(255,255,255,0.1); border-radius:4px; height:6px;">
+                <div id="predict-progress-fill" style="width:0%; height:100%; background:linear-gradient(90deg,#06b6d4,#22c55e); border-radius:4px; transition:width 0.3s;"></div>
+            </div>
+            <div id="wind-panel" style="display:none; margin-top:12px;">
+                <h3>🌪 风场预测结果</h3>
+                <p style="font-size:11px;color:var(--text-muted)">风速范围: <span id="wind-speed-range">-</span></p>
+                <div id="wind-img-container" style="background:rgba(0,0,0,0.3);border-radius:8px;padding:4px;"></div>
+            </div>
         </aside>
 
         <!-- Map -->
         <div id="map-container">
             <div id="map"></div>
+            <!-- Wind color bar -->
+            <div id="wind-colorbar" style="display:none">
+                <span class="colorbar-label">风速 (m/s)</span>
+                <canvas id="colorbar-canvas" width="20" height="200"></canvas>
+                <span id="colorbar-min">0</span>
+                <span id="colorbar-max">5</span>
+            </div>
+            <!-- Tree params popup -->
+            <div id="tree-popup" style="display:none">
+                <div class="popup-header">🌳 行道树参数</div>
+                <label>长度 L <input type="range" id="tree-length" min="5" max="100" value="20" step="1"><span id="tree-length-val">20m</span></label>
+                <label>朝向 θ <input type="range" id="tree-angle" min="0" max="180" value="0" step="5"><span id="tree-angle-val">0°</span></label>
+                <button class="btn btn-sm btn-primary" id="btn-confirm-tree">放置</button>
+                <button class="btn btn-sm" id="btn-cancel-tree">取消</button>
+            </div>
             <div id="map-loading" class="loading-overlay" style="display:none">
                 <div class="loading-box">
                     <div class="spinner"></div>
@@ -152,8 +183,8 @@
             <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--bg-primary);border-radius:var(--radius-sm);padding:4px;flex-wrap:wrap">
                 <button class="btn btn-sm import-tab active" data-tab="osm" onclick="switchImportTab('osm')"
                         style="flex:1;text-align:center;min-width:60px;background:var(--bg-tertiary)">🗺️ OSM</button>
-                <button class="btn btn-sm import-tab" data-tab="overture" onclick="switchImportTab('overture')"
-                        style="flex:1;text-align:center;min-width:60px">🌐 Overture</button>
+                <button class="btn btn-sm import-tab" data-tab="dxf" onclick="switchImportTab('dxf')"
+                        style="flex:1;text-align:center;min-width:60px">📐 DXF</button>
                 <button class="btn btn-sm import-tab" data-tab="manual" onclick="switchImportTab('manual')"
                         style="flex:1;text-align:center;min-width:60px">✏️ 手动</button>
             </div>
@@ -181,24 +212,6 @@
                 </div>
             </div>
 
-            <!-- MS Buildings tab -->
-            <div class="import-tab-content" id="tab-msbuildings" style="display:none">
-                <div class="form-group">
-                    <label>地点名称（选填）</label>
-                    <input type="text" id="ms-place" placeholder="例如：深圳中学">
-                </div>
-                <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px">
-                    或手动输入经纬度范围。国内覆盖优于 OSM，尤其适合中小城市和郊区。
-                </p>
-                <div class="form-row">
-                    <div class="form-group"><label>南 (lat)</label><input type="number" id="ms-south" step="0.001" placeholder="32.050"></div>
-                    <div class="form-group"><label>西 (lon)</label><input type="number" id="ms-west" step="0.001" placeholder="118.770"></div>
-                    <div class="form-group"><label>北 (lat)</label><input type="number" id="ms-north" step="0.001" placeholder="32.070"></div>
-                    <div class="form-group"><label>东 (lon)</label><input type="number" id="ms-east" step="0.001" placeholder="118.790"></div>
-                </div>
-            </div>
-
-            <!-- DXF tab -->
             <div class="import-tab-content" id="tab-dxf" style="display:none">
                 <div class="form-group">
                     <label>上传 DXF 文件</label>
@@ -210,28 +223,6 @@
             </div>
 
             <!-- Overture tab -->
-            <div class="import-tab-content" id="tab-overture" style="display:none">
-                <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
-                    🌐 Overture Maps — 微软+Meta+Esri 建筑数据，精确轮廓。<br>
-                    首次查询较慢（下载缓存），后续秒出。
-                </p>
-                <div class="form-group">
-                    <label>地点名称</label>
-                    <div style="display:flex;gap:4px">
-                        <input type="text" id="ov-place" placeholder="例如：深圳中学" style="flex:1">
-                        <button class="btn btn-sm" onclick="flyToPlaceOverture()" title="定位并填入经纬度" style="flex-shrink:0">🔍 定位</button>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group"><label>南 (lat)</label><input type="number" id="ov-south" step="0.001" placeholder="32.050"></div>
-                    <div class="form-group"><label>西 (lon)</label><input type="number" id="ov-west" step="0.001" placeholder="118.770"></div>
-                    <div class="form-group"><label>北 (lat)</label><input type="number" id="ov-north" step="0.001" placeholder="32.070"></div>
-                    <div class="form-group"><label>东 (lon)</label><input type="number" id="ov-east" step="0.001" placeholder="118.790"></div>
-                </div>
-                <button class="btn btn-sm" onclick="fillOvertureFromOSM()" style="width:100%;margin-top:4px">📋 使用 OSM 输入的经纬度</button>
-            </div>
-
-            <!-- Manual tab -->
             <div class="import-tab-content" id="tab-manual" style="display:none">
                 <div class="form-group">
                     <label>自然语言描述</label>
@@ -341,6 +332,6 @@
     <!-- Leaflet Draw JS -->
     <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
     <!-- App JS -->
-    <script src="/static/js/app.js?v=11"></script>
+    <script src="/static/js/app.js?v=37"></script>
 </body>
 </html>

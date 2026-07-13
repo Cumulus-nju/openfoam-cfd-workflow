@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>GNN Test</title>
+<style>body{font-family:sans-serif;margin:20px;background:#1a1a2e;color:#eee}
+button{margin:5px;padding:8px 16px;border-radius:6px;border:none;cursor:pointer}
+.btn{background:#0ea5e9;color:#fff}.btn2{background:#22c55e;color:#fff}.btn3{background:#f59e0b;color:#fff}
+#result{margin-top:10px;padding:10px;background:#16213e;border-radius:8px}
+img{max-width:100%;border-radius:8px;margin-top:10px}
+</style></head><body>
+<h2>GNN 快速测试</h2>
+<p>Case: <b>my_campus</b> (38 buildings, N wind 5m/s)</p>
+
+<button class="btn" onclick="doPredict()">1. GNN 预测</button>
+<button class="btn2" onclick="doSaveTree()">2. 保存树</button>
+<button class="btn3" onclick="doCorrect()">3. 更新风场</button>
+
+<div id="result"></div>
+
+<script>
+var CASE = 'E:/UrbanWind/cfd_cases/my_campus';
+
+async function doPredict() {
+    var r = document.getElementById('result');
+    r.innerHTML = '预测中...';
+    var resp = await fetch('/api/predict-from-case', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({case_dir: CASE, wind_direction:'N', inlet_speed:5.0})
+    });
+    var d = await resp.json();
+    if (d.success) {
+        r.innerHTML = `✅ 预测完成 | 风速: ${d.speed_min.toFixed(1)} - ${d.speed_max.toFixed(1)} m/s<br>
+        <img src="${d.image_base64}">`;
+    } else {
+        r.innerHTML = '❌ ' + JSON.stringify(d);
+    }
+}
+
+async function doSaveTree() {
+    var r = document.getElementById('result');
+    var resp = await fetch('/api/save-trees', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({case_dir: CASE, wind_direction:'N', inlet_speed:5.0,
+            trees: [{cx:116.3415, cy:39.995, length:80, angle_deg:90}]})
+    });
+    var d = await resp.json();
+    r.innerHTML = d.success ? `✅ 已保存 ${d.num_trees} 排树` : '❌ ' + JSON.stringify(d);
+}
+
+async function doCorrect() {
+    var r = document.getElementById('result');
+    r.innerHTML = '计算中...';
+    var resp = await fetch('/api/correct-from-case', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({case_dir: CASE, wind_direction:'N', inlet_speed:5.0})
+    });
+    var d = await resp.json();
+    if (d.success) {
+        r.innerHTML = `✅ 修正完成 | ${d.num_trees} 排树 | 风速: ${d.speed_min.toFixed(1)}-${d.speed_max.toFixed(1)} m/s<br>
+        <img src="${d.image_base64}">`;
+    } else {
+        r.innerHTML = '❌ ' + JSON.stringify(d);
+    }
+}
+</script></body></html>

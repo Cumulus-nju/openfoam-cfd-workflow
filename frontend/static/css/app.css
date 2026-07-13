@@ -912,6 +912,83 @@ html, body {
 
 /* ── Reduced motion ───────────────────────────────────────────────────────── */
 
+/* ── Wind prediction & tree placement ──────────────────────────────────────── */
+
+.toolbar-divider {
+    display: inline-block;
+    width: 1px;
+    height: 24px;
+    background: var(--border);
+    margin: 0 8px;
+    vertical-align: middle;
+}
+
+.btn-accent {
+    background: linear-gradient(135deg, #06b6d4, #0ea5e9);
+    color: #fff;
+    border: none;
+}
+.btn-accent:hover { filter: brightness(1.2); }
+
+.btn-success {
+    background: linear-gradient(135deg, #22c55e, #10b981);
+    color: #fff;
+    border: none;
+}
+.btn-success:hover { filter: brightness(1.2); }
+
+.btn.active {
+    background: #334155;
+    box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* Wind overlay */
+#wind-colorbar {
+    position: absolute;
+    right: 12px;
+    bottom: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    background: rgba(15, 23, 42, 0.9);
+    border-radius: 8px;
+    padding: 8px;
+    z-index: 500;
+    font-size: 11px;
+    color: #94a3b8;
+}
+#wind-colorbar canvas { border-radius: 4px; }
+.colorbar-label { font-weight: 600; color: #e2e8f0; }
+
+/* Tree popup */
+#tree-popup {
+    position: fixed;
+    background: rgba(15, 23, 42, 0.97);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    z-index: 9999;
+    min-width: 220px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    pointer-events: auto;
+}
+#tree-popup .popup-header {
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: #e2e8f0;
+}
+#tree-popup label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: #94a3b8;
+}
+#tree-popup input[type=range] { flex: 1; accent-color: #22c55e; }
+#tree-popup button { margin-top: 4px; }
+
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
         animation-duration: 0.01ms !important;
