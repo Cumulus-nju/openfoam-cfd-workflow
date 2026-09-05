@@ -60,13 +60,14 @@ WRITE_INTERVAL = 100
 
 # ── OSM Defaults ─────────────────────────────────────────────────────────────
 
-OSM_OVERPASS_URL = "https://overpass.nchc.org.tw/api/interpreter"
+# 2026-09 实测：nchc 主端点已失效（SSL 中断），openstreetmap.ru 握手超时；
+# 可用端点（按延迟排序）：z.overpass-api.de (1.8s) → overpass-api.de (7s) → kumi (12s) → osm.ch (快但数据少，作末位兜底)
+OSM_OVERPASS_URL = "https://z.overpass-api.de/api/interpreter"
 OSM_OVERPASS_FALLBACKS = [
-    "https://z.overpass-api.de/api/interpreter",
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.openstreetmap.ru/api/interpreter",
     "https://overpass.osm.ch/api/interpreter",
+    "https://overpass.nchc.org.tw/api/interpreter",
 ]
 OSM_TIMEOUT = 90  # seconds (increased for slow connections)
 
