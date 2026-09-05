@@ -62,18 +62,57 @@ async function init() {
         return;
     }
 
-    // Init map
-    initMap();
-    initTreeMode();
+    // 地图懒初始化：首次进入「城市风场模拟」模块时才创建（平台首页默认显示）
     getUpdateWindBtn();  // ensure button element exists
 
     // Check model status
     checkHealth();
 
+    // 城市风场模拟是平台基底：默认进入（首次需初始化地图）
+    switchScene('wind');
+
     // Auto-collapse chat on small screens
     if (window.innerWidth < 1200) {
         toggleChat(true);
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 场景切换（城市风场模拟 = 平台基底；单车选址/无人机 = 可切入的应用场景）
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let windMapReady = false;
+
+function showView(name) {
+    document.getElementById('wind-module').style.display = (name === 'wind') ? '' : 'none';
+    document.getElementById('siting-module').style.display = (name === 'siting') ? '' : 'none';
+    // 场景导航高亮
+    var w = document.getElementById('scene-btn-wind');
+    var s = document.getElementById('scene-btn-siting');
+    if (w) w.classList.toggle('active', name === 'wind');
+    if (s) s.classList.toggle('active', name === 'siting');
+}
+
+function switchScene(name) {
+    if (name === 'wind') {
+        showView('wind');
+        ensureWindMap();
+    } else if (name === 'siting') {
+        showView('siting');
+        if (window.ensureSitingMap) setTimeout(window.ensureSitingMap, 50);
+    }
+}
+
+// 从应用场景返回风场基底
+function goToWind() {
+    switchScene('wind');
+}
+
+function ensureWindMap() {
+    if (windMapReady) { map.invalidateSize(); return; }
+    windMapReady = true;
+    initMap();
+    initTreeMode();   // 树木点击监听依赖 map，必须在 map 创建后绑定
 }
 
 function initMap() {
@@ -84,10 +123,9 @@ function initMap() {
         attributionControl: true,
     });
 
-    // Dark tile layer (CartoDB dark)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-        subdomains: 'abcd',
+    // Dark tile layer (Esri World Dark Gray — 免费无 key；CARTO cartocdn 2025 起提示 API key required，弃用)
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri — World Dark Gray Canvas',
         maxZoom: 20,
     }).addTo(map);
 
@@ -842,32 +880,6 @@ async function importMSBuildings() {
     showToast(`成功导入 ${data.num_buildings} 栋建筑 (Microsoft)`, 'success');
 }
 
-async function importGaode() {
-    const place = document.getElementById('gaode-place').value.trim();
-    const keywords = document.getElementById('gaode-keywords').value.trim() || '学校';
-
-    if (!place) {
-        throw new Error('请输入地点名称');
-    }
-
-    console.log('Gaode import:', place, keywords);
-    const resp = await fetch(`/api/import/gaode?session_id=${API.sessionId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ place, keywords }),
-    });
-    const data = await resp.json();
-    console.log('Gaode response:', data.success, data.num_buildings);
-    if (!data.success) throw new Error(data.detail);
-
-    API.plan = data.plan;
-    console.log('Calling renderPlanOnMap with', data.plan.features?.length, 'features');
-    renderPlanOnMap(data.plan);
-    console.log('Rendering done');
-    const note = data.metadata?.note || '';
-    showToast(`成功导入 ${data.num_buildings} 栋建筑 (高德${note ? '，' + note : ''})`, 'success');
-}
-
 function fillOvertureFromOSM() {
     document.getElementById('ov-south').value = document.getElementById('osm-south').value;
     document.getElementById('ov-west').value = document.getElementById('osm-west').value;
@@ -1216,6 +1228,38 @@ let placedTrees = [];         // [{cx, cy, length, angle_deg}]
 let treeMarkers = [];         // Leaflet markers for placed trees
 
 // Step-guided flow: 导入 → 智能推断/生成CFD → 风场预测 → 放置树木
+
+// ── 风场预测参数弹窗（通用）──────────────────────────────────────────────
+
+let windPredictSource = null;   // 'fromCase' | 'fromSession'
+
+function showWindParamsModal(source) {
+    windPredictSource = source;
+    // 预填上次参数
+    var dirSel = document.getElementById('wp-direction');
+    if (API.windDirection) dirSel.value = API.windDirection;
+    var spdIn = document.getElementById('wp-speed');
+    if (API.inletSpeed) spdIn.value = API.inletSpeed;
+    document.getElementById('wind-params-modal').style.display = 'flex';
+}
+
+function hideWindParamsModal() {
+    document.getElementById('wind-params-modal').style.display = 'none';
+}
+
+async function runWindPrediction() {
+    var dir = document.getElementById('wp-direction').value;
+    var spd = parseFloat(document.getElementById('wp-speed').value);
+    if (!spd || spd <= 0) { showToast('请输入有效的入口风速', 'error'); return; }
+    API.windDirection = dir;
+    API.inletSpeed = spd;
+    hideWindParamsModal();
+    if (windPredictSource === 'fromCase') {
+        await predictFromCase();
+    } else if (windPredictSource === 'fromSession') {
+        await predictWindField();
+    }
+}
 
 async function predictFromCase() {
     if (!API.lastCaseDir) { showToast('请先生成 CFD 案例', 'warning'); return; }

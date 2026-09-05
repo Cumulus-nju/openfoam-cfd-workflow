@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>UrbanWind CFD — 城市风场智能建模</title>
+    <title>UrbanWind 平台 — 城市风场智能建模</title>
 
     <!-- Fonts: Noto Sans SC for Chinese render quality -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -16,177 +16,279 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
 
     <!-- App CSS -->
-    <link rel="stylesheet" href="/static/css/app.css?v=3">
-
-    <!-- Preload SVG icons as inline sprite -->
+    <link rel="stylesheet" href="/static/css/app.css?v=4">
 </head>
 <body>
     <!-- ═══════════════════════════════════════════════════════════════════════
-         UrbanWind CFD — Single Page Application
+         WIND MODULE — 城市风场模拟（平台基底，默认主视图）
          ════════════════════════════════════════════════════════════════════ -->
+    <div id="wind-module">
+        <div id="app">
+            <!-- Toolbar -->
+            <header id="toolbar">
+                <div class="toolbar-brand">
+                    <div class="logo">🌬</div>
+                    <span class="brand-text">UrbanWind</span>
+                </div>
+                <!-- 场景导航：基底 + 可切入的应用场景 -->
+                <nav class="scene-nav">
+                    <button class="scene-btn active" id="scene-btn-wind" onclick="switchScene('wind')" title="城市风场模拟（基础能力）">
+                        <span class="scene-dot"></span>🏙️ 城市风场
+                    </button>
+                    <span class="scene-sep"></span>
+                    <button class="scene-btn" id="scene-btn-siting" onclick="switchScene('siting')" title="基于风场结果评估共享单车停放点">
+                        <span class="scene-dot"></span>🚲 单车选址
+                    </button>
+                    <button class="scene-btn scene-disabled" id="scene-btn-drone" onclick="showToast('低空经济板块建设中，敬请期待', 'info')" title="基于风场能力做无人机航线规划与预警">
+                        <span class="scene-dot"></span>🛸 无人机
+                    </button>
+                </nav>
+                <div class="toolbar-actions">
+                    <button class="btn" onclick="showImportModal()" title="导入数据">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                        </svg>
+                        导入
+                    </button>
+                    <button class="btn" id="btn-enrich" onclick="runLLMEnrich()" disabled title="LLM智能推断建筑属性">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                        </svg>
+                        智能推断
+                    </button>
+                    <button class="btn btn-primary" id="btn-generate" onclick="showGenerateModal()" disabled title="生成OpenFOAM案例">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        生成CFD案例
+                    </button>
+                    <span class="toolbar-divider"></span>
+                    <button class="btn" id="btn-tree-mode" onclick="toggleTreeMode()" style="display:none" title="放置行道树等参数化特征">
+                        🌳 放置树木
+                    </button>
+                    <button class="btn btn-accent" id="btn-predict-case" style="display:none" onclick="showWindParamsModal('fromCase')" title="从CFD案例预测风场">🌪 预测风场</button>
+                    <button class="btn" id="btn-save-trees" onclick="saveTreesToCase()" style="display:none" title="保存树木到案例">💾 保存树木</button>
+                    <span id="btn-update-wind-container"></span>
+                </div>
+            </header>
 
-    <div id="app">
-        <!-- Toolbar -->
-        <header id="toolbar">
-            <div class="toolbar-brand">
-                <div class="logo">🌬</div>
-                <span class="brand-text">UrbanWind CFD</span>
+            <!-- Sidebar -->
+            <aside id="sidebar">
+                <div class="sidebar-header">
+                    <h2>🏗️ 建筑列表</h2>
+                    <span id="building-count" style="font-size:12px;color:var(--text-muted)">0 栋</span>
+                </div>
+                <div class="sidebar-content" id="building-list">
+                    <div class="empty-state" style="height:200px">
+                        <div class="empty-icon">📋</div>
+                        <p style="font-size:12px">暂无数据<br>点击「导入」开始</p>
+                    </div>
+                </div>
+                <div id="properties-panel" style="display:none">
+                    <h3>📐 属性编辑</h3>
+                    <div id="props-content"></div>
+                    <div style="margin-top:12px;display:flex;gap:8px">
+                        <button class="btn btn-sm btn-danger" id="btn-delete-building" style="display:none" onclick="deleteSelectedBuilding()">删除建筑</button>
+                    </div>
+                </div>
+                <!-- Wind prediction panel -->
+                <div id="predict-progress" style="display:none; margin:8px 0; background:rgba(255,255,255,0.1); border-radius:4px; height:6px;">
+                    <div id="predict-progress-fill" style="width:0%; height:100%; background:linear-gradient(90deg,#06b6d4,#22c55e); border-radius:4px; transition:width 0.3s;"></div>
+                </div>
+                <div id="wind-panel" style="display:none; margin-top:12px;">
+                    <h3>🌪 风场预测结果</h3>
+                    <p style="font-size:11px;color:var(--text-muted)">风速范围: <span id="wind-speed-range">-</span></p>
+                    <div id="wind-img-container" style="background:rgba(0,0,0,0.3);border-radius:8px;padding:4px;"></div>
+                </div>
+            </aside>
+
+            <!-- Map -->
+            <div id="map-container">
+                <div id="map"></div>
+                <!-- Wind color bar -->
+                <div id="wind-colorbar" style="display:none">
+                    <span class="colorbar-label">风速 (m/s)</span>
+                    <canvas id="colorbar-canvas" width="20" height="200"></canvas>
+                    <span id="colorbar-min">0</span>
+                    <span id="colorbar-max">5</span>
+                </div>
+                <!-- Tree params popup -->
+                <div id="tree-popup" style="display:none">
+                    <div class="popup-header">🌳 行道树参数</div>
+                    <label>长度 L <input type="range" id="tree-length" min="5" max="100" value="20" step="1"><span id="tree-length-val">20m</span></label>
+                    <label>朝向 θ <input type="range" id="tree-angle" min="0" max="180" value="0" step="5"><span id="tree-angle-val">0°</span></label>
+                    <button class="btn btn-sm btn-primary" id="btn-confirm-tree">放置</button>
+                    <button class="btn btn-sm" id="btn-cancel-tree">取消</button>
+                </div>
+                <div id="map-loading" class="loading-overlay" style="display:none">
+                    <div class="loading-box">
+                        <div class="spinner"></div>
+                        <span>加载中...</span>
+                    </div>
+                </div>
             </div>
-            <div class="toolbar-actions">
-                <button class="btn" onclick="showImportModal()" title="导入数据">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+
+            <!-- Chat Panel -->
+            <div id="chat-panel">
+                <div class="chat-glass">
+                    <div class="chat-header" onclick="toggleChat()">
+                        <h3>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                            </svg>
+                            AI 助手
+                            <span class="ai-badge">LLM</span>
+                        </h3>
+                        <button class="btn btn-icon btn-sm" onclick="event.stopPropagation();toggleChat()" title="收起面板">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="9 18 15 12 9 6"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="chat-msg assistant">
+                            👋 你好！我是 UrbanWind 建筑建模助手。<br>
+                            试着告诉我你的需求，比如：<br>
+                            • 「导入南京大学鼓楼校区」<br>
+                            • 「把图书馆改成30米高」<br>
+                            • 「在南侧教学楼之间放5个单车点」
+                        </div>
+                    </div>
+                    <div class="chat-input-area">
+                        <input type="text" id="chat-input" placeholder="输入自然语言指令..."
+                               onkeydown="if(event.key==='Enter')sendChat()" autocomplete="off">
+                        <button class="btn btn-sm btn-primary" onclick="sendChat()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Status Bar -->
+            <footer id="statusbar">
+                <div class="status-left">
+                    <span class="status-indicator">
+                        <span class="status-dot" id="status-dot"></span>
+                        <span id="status-text">就绪</span>
+                    </span>
+                    <span id="status-buildings">建筑: 0</span>
+                    <span id="status-bikes">单车点: 0</span>
+                </div>
+                <div class="status-right">
+                    <span id="status-model">模型: 检查中...</span>
+                </div>
+            </footer>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         SITING MODULE — 单车选址工作台
+         ════════════════════════════════════════════════════════════════════ -->
+    <div id="siting-module" style="display:none">
+        <header class="module-toolbar">
+            <div class="toolbar-brand">
+                <button class="btn btn-icon" onclick="goToWind()" title="返回城市风场模拟">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="15 18 9 12 15 6"/>
                     </svg>
-                    导入
                 </button>
-                <button class="btn" id="btn-enrich" onclick="runLLMEnrich()" disabled title="LLM智能推断建筑属性">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                    </svg>
-                    智能推断
-                </button>
-                <button class="btn btn-primary" id="btn-generate" onclick="showGenerateModal()" disabled title="生成OpenFOAM案例">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polygon points="5 3 19 12 5 21 5 3"/>
-                    </svg>
-                    生成CFD案例
-                </button>
-                <span class="toolbar-divider"></span>
-                <button class="btn" id="btn-tree-mode" onclick="toggleTreeMode()" style="display:none" title="放置行道树等参数化特征">
-                    🌳 放置树木
-                </button>
-                <button class="btn btn-accent" id="btn-predict-case" style="display:none" onclick="predictFromCase()" title="从CFD案例预测风场">🌪 预测风场</button>
-                <button class="btn" id="btn-save-trees" onclick="saveTreesToCase()" style="display:none" title="保存树木到案例">💾 保存树木</button>
-                <span id="btn-update-wind-container"></span>
+                <div class="logo logo-bike">🚲</div>
+                <span class="brand-text">UrbanWind · 单车选址</span>
+            </div>
+
+            <div class="module-toolbar-controls">
+                <div class="ctl-group">
+                    <label>CFD 案例</label>
+                    <select id="siting-case-select" onchange="onSitingCaseChange()">
+                        <option value="">加载中...</option>
+                    </select>
+                </div>
+                <div class="ctl-group">
+                    <label>风向</label>
+                    <select id="siting-wind">
+                        <option value="N">北风 → 南</option>
+                        <option value="S">南风 → 北</option>
+                        <option value="E">东风 → 西</option>
+                        <option value="W">西风 → 东</option>
+                    </select>
+                </div>
+                <div class="ctl-group">
+                    <label>风速 (m/s)</label>
+                    <input type="number" id="siting-speed" value="5.0" step="0.5" min="1" max="30" style="width:90px">
+                </div>
+                <button class="btn btn-primary" id="btn-siting-run" onclick="runBikeSiting()">🎯 评估选址</button>
             </div>
         </header>
 
-        <!-- Sidebar -->
-        <aside id="sidebar">
-            <div class="sidebar-header">
-                <h2>🏗️ 建筑列表</h2>
-                <span id="building-count" style="font-size:12px;color:var(--text-muted)">0 栋</span>
-            </div>
-            <div class="sidebar-content" id="building-list">
-                <div class="empty-state" style="height:200px">
-                    <div class="empty-icon">📋</div>
-                    <p style="font-size:12px">暂无数据<br>点击「导入」开始</p>
-                </div>
-            </div>
-            <div id="properties-panel" style="display:none">
-                <h3>📐 属性编辑</h3>
-                <div id="props-content"></div>
-                <div style="margin-top:12px;display:flex;gap:8px">
-                    <button class="btn btn-sm btn-danger" id="btn-delete-building" style="display:none" onclick="deleteSelectedBuilding()">删除建筑</button>
-                </div>
-            </div>
-            <!-- Wind prediction panel -->
-            <div id="predict-progress" style="display:none; margin:8px 0; background:rgba(255,255,255,0.1); border-radius:4px; height:6px;">
-                <div id="predict-progress-fill" style="width:0%; height:100%; background:linear-gradient(90deg,#06b6d4,#22c55e); border-radius:4px; transition:width 0.3s;"></div>
-            </div>
-            <div id="wind-panel" style="display:none; margin-top:12px;">
-                <h3>🌪 风场预测结果</h3>
-                <p style="font-size:11px;color:var(--text-muted)">风速范围: <span id="wind-speed-range">-</span></p>
-                <div id="wind-img-container" style="background:rgba(0,0,0,0.3);border-radius:8px;padding:4px;"></div>
-            </div>
-        </aside>
+        <div class="siting-layout">
+            <div id="siting-map"></div>
 
-        <!-- Map -->
-        <div id="map-container">
-            <div id="map"></div>
-            <!-- Wind color bar -->
-            <div id="wind-colorbar" style="display:none">
-                <span class="colorbar-label">风速 (m/s)</span>
-                <canvas id="colorbar-canvas" width="20" height="200"></canvas>
-                <span id="colorbar-min">0</span>
-                <span id="colorbar-max">5</span>
-            </div>
-            <!-- Tree params popup -->
-            <div id="tree-popup" style="display:none">
-                <div class="popup-header">🌳 行道树参数</div>
-                <label>长度 L <input type="range" id="tree-length" min="5" max="100" value="20" step="1"><span id="tree-length-val">20m</span></label>
-                <label>朝向 θ <input type="range" id="tree-angle" min="0" max="180" value="0" step="5"><span id="tree-angle-val">0°</span></label>
-                <button class="btn btn-sm btn-primary" id="btn-confirm-tree">放置</button>
-                <button class="btn btn-sm" id="btn-cancel-tree">取消</button>
-            </div>
-            <div id="map-loading" class="loading-overlay" style="display:none">
-                <div class="loading-box">
-                    <div class="spinner"></div>
-                    <span>加载中...</span>
+            <aside id="siting-panel">
+                <div class="siting-panel-head">
+                    <h3>📊 评估结果</h3>
+                    <span id="siting-case-info" class="siting-case-info">请选择 CFD 案例</span>
                 </div>
-            </div>
-        </div>
 
-        <!-- Chat Panel -->
-        <div id="chat-panel">
-            <div class="chat-glass">
-                <div class="chat-header" onclick="toggleChat()">
-                    <h3>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                        </svg>
-                        AI 助手
-                        <span class="ai-badge">LLM</span>
-                    </h3>
-                    <button class="btn btn-icon btn-sm" onclick="event.stopPropagation();toggleChat()" title="收起面板">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="9 18 15 12 9 6"/>
-                        </svg>
-                    </button>
+                <!-- 空态 -->
+                <div id="siting-empty" class="siting-empty">
+                    <div class="empty-icon">🚲</div>
+                    <p>选择左侧 CFD 案例与风况<br>点击「评估选址」开始</p>
                 </div>
-                <div class="chat-messages" id="chat-messages">
-                    <div class="chat-msg assistant">
-                        👋 你好！我是 UrbanWind 建筑建模助手。<br>
-                        试着告诉我你的需求，比如：<br>
-                        • 「导入南京大学鼓楼校区」<br>
-                        • 「把图书馆改成30米高」<br>
-                        • 「在南侧教学楼之间放5个单车点」
+
+                <!-- 统计卡片 -->
+                <div id="siting-stats" style="display:none">
+                    <div class="siting-stats-grid">
+                        <div class="stat-card stat-high"><span class="stat-num" id="stat-high">0</span><span class="stat-label">高风险</span></div>
+                        <div class="stat-card stat-medium"><span class="stat-num" id="stat-medium">0</span><span class="stat-label">中风险</span></div>
+                        <div class="stat-card stat-low"><span class="stat-num" id="stat-low">0</span><span class="stat-label">低风险</span></div>
+                        <div class="stat-card stat-calm"><span class="stat-num" id="stat-calm">0</span><span class="stat-label">静风区</span></div>
+                    </div>
+                    <p class="siting-meta" id="siting-meta"></p>
+
+                    <div class="siting-legend">
+                        <span><i style="background:#ef4444"></i>高风险</span>
+                        <span><i style="background:#f59e0b"></i>中风险</span>
+                        <span><i style="background:#10b981"></i>低风险</span>
+                        <span><i style="background:#38bdf8"></i>静风区</span>
+                    </div>
+
+                    <div id="siting-img" class="siting-img"></div>
+
+                    <div class="siting-recs">
+                        <div class="recs-title">✅ 最安全推荐</div>
+                        <div id="recs-safest" class="recs-list"></div>
+                        <div class="recs-title recs-danger">⚠️ 风险最高</div>
+                        <div id="recs-riskiest" class="recs-list"></div>
                     </div>
                 </div>
-                <div class="chat-input-area">
-                    <input type="text" id="chat-input" placeholder="输入自然语言指令..."
-                           onkeydown="if(event.key==='Enter')sendChat()" autocomplete="off">
-                    <button class="btn btn-sm btn-primary" onclick="sendChat()">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                        </svg>
-                    </button>
-                </div>
-            </div>
+            </aside>
         </div>
-
-        <!-- Status Bar -->
-        <footer id="statusbar">
-            <div class="status-left">
-                <span class="status-indicator">
-                    <span class="status-dot" id="status-dot"></span>
-                    <span id="status-text">就绪</span>
-                </span>
-                <span id="status-buildings">建筑: 0</span>
-                <span id="status-bikes">单车点: 0</span>
-            </div>
-            <div class="status-right">
-                <span id="status-model">模型: 检查中...</span>
-            </div>
-        </footer>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════════════
          Import Modal
          ════════════════════════════════════════════════════════════════════ -->
     <div class="modal-overlay" id="import-modal" style="display:none">
-        <div class="modal">
+        <div class="modal modal-wide">
             <h2>📥 导入建筑数据</h2>
             <p>选择数据源类型，支持多种格式输入</p>
 
             <!-- Tab switcher -->
             <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--bg-primary);border-radius:var(--radius-sm);padding:4px;flex-wrap:wrap">
                 <button class="btn btn-sm import-tab active" data-tab="osm" onclick="switchImportTab('osm')"
-                        style="flex:1;text-align:center;min-width:60px;background:var(--bg-tertiary)">🗺️ OSM</button>
+                        style="flex:1;text-align:center;min-width:76px;background:var(--bg-tertiary)">🗺️ OSM</button>
+                <button class="btn btn-sm import-tab" data-tab="gaode" onclick="switchImportTab('gaode')"
+                        style="flex:1;text-align:center;min-width:76px">🏢 高德</button>
+                <button class="btn btn-sm import-tab" data-tab="msbuildings" onclick="switchImportTab('msbuildings')"
+                        style="flex:1;text-align:center;min-width:76px">🪟 Microsoft</button>
+                <button class="btn btn-sm import-tab" data-tab="overture" onclick="switchImportTab('overture')"
+                        style="flex:1;text-align:center;min-width:76px">🌐 Overture</button>
                 <button class="btn btn-sm import-tab" data-tab="dxf" onclick="switchImportTab('dxf')"
-                        style="flex:1;text-align:center;min-width:60px">📐 DXF</button>
+                        style="flex:1;text-align:center;min-width:76px">📐 DXF</button>
                 <button class="btn btn-sm import-tab" data-tab="manual" onclick="switchImportTab('manual')"
-                        style="flex:1;text-align:center;min-width:60px">✏️ 手动</button>
+                        style="flex:1;text-align:center;min-width:76px">✏️ 手动</button>
             </div>
 
             <!-- OSM tab -->
@@ -210,6 +312,58 @@
                     <div class="form-group"><label>北 (lat)</label><input type="number" id="osm-north" step="0.001" placeholder="32.070"></div>
                     <div class="form-group"><label>东 (lon)</label><input type="number" id="osm-east" step="0.001" placeholder="118.790"></div>
                 </div>
+                <p style="font-size:11px;color:var(--text-muted)">来源：OpenStreetMap（Overpass API，免费无需 key，建筑轮廓+属性完整）</p>
+            </div>
+
+            <!-- 高德 tab -->
+            <div class="import-tab-content" id="tab-gaode" style="display:none">
+                <div class="form-group">
+                    <label>地点名称</label>
+                    <div style="display:flex;gap:4px">
+                        <input type="text" id="gaode-place" placeholder="例如：南京大学" style="flex:1">
+                        <button class="btn btn-sm" onclick="flyToPlaceGaode()" style="flex-shrink:0">🔍 定位</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>POI 关键词</label>
+                    <input type="text" id="gaode-keywords" placeholder="例如：学校（默认）">
+                </div>
+                <p style="font-size:11px;color:var(--text-muted)">来源：高德地图 POI（需国内网络，返回 POI 点状数据，高校/园区覆盖好）</p>
+            </div>
+
+            <!-- Microsoft tab -->
+            <div class="import-tab-content" id="tab-msbuildings" style="display:none">
+                <div class="form-group">
+                    <label>地点名称</label>
+                    <input type="text" id="ms-place" placeholder="例如：南京大学仙林校区（自动地理编码）">
+                </div>
+                <p style="font-size:11px;color:var(--text-muted)">或手动输入经纬度范围（与 OSM 相同格式）</p>
+                <div class="form-row">
+                    <div class="form-group"><label>南 (lat)</label><input type="number" id="ms-south" step="0.001" placeholder="32.050"></div>
+                    <div class="form-group"><label>西 (lon)</label><input type="number" id="ms-west" step="0.001" placeholder="118.770"></div>
+                    <div class="form-group"><label>北 (lat)</label><input type="number" id="ms-north" step="0.001" placeholder="32.070"></div>
+                    <div class="form-group"><label>东 (lon)</label><input type="number" id="ms-east" step="0.001" placeholder="118.790"></div>
+                </div>
+                <p style="font-size:11px;color:var(--text-muted)">来源：Microsoft Global Building Footprints（免费无 key，全球建筑轮廓密度高，无楼层/高度属性）</p>
+            </div>
+
+            <!-- Overture tab -->
+            <div class="import-tab-content" id="tab-overture" style="display:none">
+                <div class="form-group">
+                    <label>地点名称</label>
+                    <div style="display:flex;gap:4px">
+                        <input type="text" id="ov-place" placeholder="例如：南京大学（自动地理编码）" style="flex:1">
+                        <button class="btn btn-sm" onclick="flyToPlaceOverture()" style="flex-shrink:0">🔍 定位</button>
+                    </div>
+                </div>
+                <p style="font-size:11px;color:var(--text-muted)">或手动输入经纬度范围</p>
+                <div class="form-row">
+                    <div class="form-group"><label>南 (lat)</label><input type="number" id="ov-south" step="0.001" placeholder="32.050"></div>
+                    <div class="form-group"><label>西 (lon)</label><input type="number" id="ov-west" step="0.001" placeholder="118.770"></div>
+                    <div class="form-group"><label>北 (lat)</label><input type="number" id="ov-north" step="0.001" placeholder="32.070"></div>
+                    <div class="form-group"><label>东 (lon)</label><input type="number" id="ov-east" step="0.001" placeholder="118.790"></div>
+                </div>
+                <p style="font-size:11px;color:var(--text-muted)">来源：Overture Maps（Microsoft+Meta+Esri，精确轮廓，全球覆盖，本地缓存，首次较慢）</p>
             </div>
 
             <div class="import-tab-content" id="tab-dxf" style="display:none">
@@ -222,7 +376,6 @@
                 </p>
             </div>
 
-            <!-- Overture tab -->
             <div class="import-tab-content" id="tab-manual" style="display:none">
                 <div class="form-group">
                     <label>自然语言描述</label>
@@ -246,6 +399,38 @@
                 <button class="btn btn-primary" id="btn-import-exec" onclick="executeImport()">
                     开始导入
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Wind Prediction Modal（风参数设置，替换 prompt 弹窗）
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="wind-params-modal" style="display:none">
+        <div class="modal">
+            <h2>🌪 风场预测参数</h2>
+            <p>设置风向与入口风速，GNN 代理模型秒级预测行人高度风场</p>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>风向</label>
+                    <select id="wp-direction">
+                        <option value="N">北风 → 南</option>
+                        <option value="S">南风 → 北</option>
+                        <option value="E">东风 → 西</option>
+                        <option value="W">西风 → 东</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>入口风速 (m/s)</label>
+                    <input type="number" id="wp-speed" value="5.0" step="0.5" min="1" max="30">
+                </div>
+            </div>
+            <p style="font-size:11px;color:var(--text-muted);margin-bottom:16px">
+                参考：行人高度 1.5m · 模型基于 CFD k-ε RANS 训练 · 当前模型对自由流存在一定低估
+            </p>
+            <div class="modal-actions">
+                <button class="btn" onclick="hideWindParamsModal()">取消</button>
+                <button class="btn btn-primary" id="btn-wp-run" onclick="runWindPrediction()">开始预测</button>
             </div>
         </div>
     </div>
@@ -332,6 +517,8 @@
     <!-- Leaflet Draw JS -->
     <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
     <!-- App JS -->
-    <script src="/static/js/app.js?v=37"></script>
+    <script src="/static/js/app.js?v=38"></script>
+    <!-- 单车选址板块 JS -->
+    <script src="/static/js/siting.js?v=1"></script>
 </body>
 </html>

@@ -156,7 +156,8 @@ async def import_dxf(
     sess = _get_session(session_id)
 
     # Save temp file
-    tmp_path = Path(f"D:/Phase2_CFD_ML/tmp_{uuid.uuid4().hex[:8]}.dxf")
+    import tempfile as _tf
+    tmp_path = Path(_tf.gettempdir()) / f"urbanwind_dxf_{uuid.uuid4().hex[:8]}.dxf"
     try:
         with open(tmp_path, "wb") as f:
             content = await file.read()
@@ -849,6 +850,315 @@ async def correct_from_case(request: Dict[str, Any] = Body(...)):
     }
 
 
+# ── 单车选址板块 ─────────────────────────────────────────────────────────────
+
+
+def _case_buildings_from_geojson(geojson) -> list:
+    """从 site_plan.geojson 提取建筑 polygon_local + height（含经纬度→米转换）。"""
+    buildings_local = []
+    for feat in geojson.get("features", []):
+        if feat.get("category") != "building":
+            continue
+        coords = feat.get("geometry", {}).get("coordinates", [[]])[0]
+        if not coords:
+            continue
+        props = feat.get("properties", {})
+        h = props.get("height") or props.get("inferred_height") or 10.0
+        buildings_local.append({"polygon_local": [[p[0], p[1]] for p in coords], "height": float(h)})
+
+    if not buildings_local:
+        return buildings_local
+
+    all_x = [p[0] for b in buildings_local for p in b["polygon_local"]]
+    x_mean = (max(all_x) + min(all_x)) / 2
+    if abs(x_mean) > 10:  # WGS84 经纬度 → 局部米
+        all_y = [p[1] for b in buildings_local for p in b["polygon_local"]]
+        lon0 = (min(all_x) + max(all_x)) / 2
+        lat0 = (min(all_y) + max(all_y)) / 2
+        cos_lat = np.cos(np.radians(lat0))
+        m_lng = 111320.0 * max(cos_lat, 0.3)
+        m_lat = 111320.0
+        buildings_local = [{
+            "polygon_local": [((p[0] - lon0) * m_lng, (p[1] - lat0) * m_lat) for p in b["polygon_local"]],
+            "height": b["height"],
+        } for b in buildings_local]
+    return buildings_local
+
+
+@app.get("/api/list-cases")
+async def list_cases():
+    """列出 CFD 案例目录中的案例（板块选择用）。"""
+    cases = []
+    if CFD_CASES_DIR.exists():
+        for d in sorted(CFD_CASES_DIR.iterdir()):
+            if not d.is_dir():
+                continue
+            gj_path = d / "site_plan.geojson"
+            info = {
+                "name": d.name,
+                "has_plan": gj_path.exists(),
+                "n_buildings": 0,
+                "n_bikes": 0,
+                "center": None,
+                "modified": None,
+            }
+            try:
+                import datetime as _dt
+                info["modified"] = _dt.datetime.fromtimestamp(d.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                pass
+            if gj_path.exists():
+                try:
+                    with open(gj_path, encoding="utf-8") as f:
+                        gj = json.load(f)
+                    nb = nbk = 0
+                    for feat in gj.get("features", []):
+                        if feat.get("category") == "building":
+                            nb += 1
+                        elif feat.get("category") == "bike_station":
+                            nbk += 1
+                    info["n_buildings"] = nb
+                    info["n_bikes"] = nbk
+                    meta = gj.get("metadata", {})
+                    if meta.get("center_lat") and meta.get("center_lon"):
+                        info["center"] = [meta["center_lon"], meta["center_lat"]]
+                    else:
+                        # fallback：从建筑坐标计算中心
+                        xs, ys = [], []
+                        for feat in gj.get("features", []):
+                            if feat.get("category") != "building":
+                                continue
+                            coords = feat.get("geometry", {}).get("coordinates", [[]])[0]
+                            xs += [p[0] for p in coords]
+                            ys += [p[1] for p in coords]
+                        if xs and ys:
+                            cx = (min(xs) + max(xs)) / 2
+                            cy = (min(ys) + max(ys)) / 2
+                            # 只有经纬度坐标（绝对值>10）才能用于地图定位；局部米坐标返回 None
+                            if abs(cx) > 10 and abs(cy) < 90 and abs(cx) < 180:
+                                info["center"] = [cx, cy]
+                            else:
+                                info["center"] = None
+                except Exception as e:
+                    logger.warning(f"list-cases: 解析 {d.name} 失败: {e}")
+            cases.append(info)
+    return {"success": True, "cases": cases}
+
+
+@app.post("/api/bike-siting")
+async def bike_siting(request: Dict[str, Any] = Body(...)):
+    """
+    单车选址评估：GNN 预测（+树列修正）→ 候选单车点风暴露评分/风险分级/选址建议。
+
+    Body: {
+        case_dir: "E:/UrbanWind/cfd_cases/my_case",
+        wind_direction: "N", inlet_speed: 5.0,
+        v_crit: 11.7,            # 单车倾覆临界风速 (m/s)，来源 bike_wind_overturning_model.tex
+        gust_factor: 0.67,       # 阵风修正 (7.8/11.7)
+        high_factor: 0.8,        # 高风险阈值系数 (相对阵风阈值)
+        medium_factor: 0.5,      # 中等风险阈值系数
+        calm_speed: 1.5,         # 静风区判据 (m/s)
+    }
+    """
+    import base64, io as _io
+    import traceback as _tb
+    from matplotlib.figure import Figure
+    from matplotlib.patches import Polygon as _MplPoly
+
+    try:
+        case_dir = Path(str(request.get("case_dir", "")).replace("\\", "/"))
+        if not case_dir.exists():
+            raise HTTPException(400, f"案例不存在: {case_dir}")
+
+        geojson_path = case_dir / "site_plan.geojson"
+        if not geojson_path.exists():
+            raise HTTPException(400, f"案例中没有 site_plan.geojson")
+
+        with open(geojson_path, encoding="utf-8") as f:
+            geojson = json.load(f)
+
+        wind_dir = str(request.get("wind_direction", "N")).upper()
+        inlet_speed = float(request.get("inlet_speed", 5.0))
+        v_crit = float(request.get("v_crit", 11.7))
+        gust_factor = float(request.get("gust_factor", 0.67))
+        high_factor = float(request.get("high_factor", 0.8))
+        medium_factor = float(request.get("medium_factor", 0.5))
+        calm_speed = float(request.get("calm_speed", 1.5))
+        v_eff = v_crit * gust_factor  # 阵风修正后的倾覆阈值
+
+        buildings = _case_buildings_from_geojson(geojson)
+        if not buildings:
+            raise HTTPException(400, "案例中没有建筑数据")
+
+        # 提取单车点（bike_station，矩形多边形或点 → 质心）
+        bike_stations = []
+        for feat in geojson.get("features", []):
+            if feat.get("category") != "bike_station":
+                continue
+            geom = feat.get("geometry", {})
+            gtype = geom.get("type")
+            if gtype == "Point":
+                px, py = geom.get("coordinates", [0, 0])[:2]
+            else:
+                coords = geom.get("coordinates", [[]])[0]
+                if not coords:
+                    continue
+                px = sum(p[0] for p in coords) / len(coords)
+                py = sum(p[1] for p in coords) / len(coords)
+            bike_stations.append({"x": float(px), "y": float(py)})
+        logger.info(f"bike-siting: {case_dir}, {len(buildings)} buildings, {len(bike_stations)} bike stations")
+
+        # 建筑可能是经纬度 → 单车点同步转换（与 _case_buildings_from_geojson 相同参考点）
+        all_x = [p[0] for b in buildings for p in b["polygon_local"]]
+        x_mean = (max(all_x) + min(all_x)) / 2
+        if abs(x_mean) > 10:
+            all_y = [p[1] for b in buildings for p in b["polygon_local"]]
+            lon0 = (min(all_x) + max(all_x)) / 2
+            lat0 = (min(all_y) + max(all_y)) / 2
+            cos_lat = np.cos(np.radians(lat0))
+            m_lng = 111320.0 * max(cos_lat, 0.3)
+            m_lat = 111320.0
+            for bs in bike_stations:
+                bs["x"], bs["y"] = (bs["x"] - lon0) * m_lng, (bs["y"] - lat0) * m_lat
+
+        # 域网格（与 predict-from-case 相同规则）
+        all_x = [p[0] for b in buildings for p in b["polygon_local"]]
+        all_y = [p[1] for b in buildings for p in b["polygon_local"]]
+        margin = max(40, (max(all_x) - min(all_x)) * 0.3)
+        grid_size = 250
+        grid_x = np.linspace(min(all_x) - margin, max(all_x) + margin, grid_size)
+        grid_y = np.linspace(max(all_y) + margin, min(all_y) - margin, grid_size)
+
+        predictor = _get_predictor()
+        if predictor is None:
+            raise HTTPException(503, "GNN 模型未就绪")
+
+        Ux, Uy, speed = predictor.predict(buildings, wind_dir, inlet_speed, grid_x, grid_y)
+
+        # 树列修正（若 case 有 trees.json，自动叠加）
+        trees_path = case_dir / "trees.json"
+        n_trees = 0
+        if trees_path.exists():
+            from .param_correction import TreeRow, apply_tree_correction
+            wd_map = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
+            wd = wd_map.get(wind_dir, (0, 1))
+            try:
+                with open(trees_path, encoding="utf-8") as f:
+                    trees_data = json.load(f).get("trees", [])
+                trees = [TreeRow(cx=t["cx"], cy=t["cy"], length=t.get("length", 20),
+                                 angle_deg=t.get("angle_deg", 0)) for t in trees_data]
+                n_trees = len(trees)
+                if trees:
+                    _, _, speed = apply_tree_correction(Ux, Uy, speed, grid_x, grid_y, trees, wd, inlet_speed)
+            except Exception as e:
+                logger.warning(f"bike-siting: 树列修正跳过: {e}")
+
+        # 对每个单车点采样（最近邻，网格分辨率 1-2m 足够）
+        dx = grid_x[1] - grid_x[0]
+        dy = grid_y[1] - grid_y[0]
+        H, W = speed.shape
+
+        def _sample(px, py):
+            ix = int(round((px - grid_x[0]) / dx))
+            iy = int(round((py - grid_y[0]) / dy))  # grid_y 递减，取最近邻即可
+            ix = max(0, min(W - 1, ix))
+            iy = max(0, min(H - 1, iy))
+            v = speed[iy, ix]
+            return float(v) if v == v else None  # NaN → None
+
+        def _risk_level(sp):
+            if sp is None:
+                return "unknown"
+            if sp >= high_factor * v_eff:
+                return "high"
+            if sp >= medium_factor * v_eff:
+                return "medium"
+            if sp >= calm_speed:
+                return "low"
+            return "calm"
+
+        _sug = {
+            "high": "倾覆风险高：阵风下易倒伏，建议迁移或加装防风围挡",
+            "medium": "存在风致风险：大风天建议调度清空，或加装挡风设施",
+            "low": "风暴露正常：适合停放，日常通风良好",
+            "calm": "静风区：通风较差，注意雨雪后潮湿积渍",
+            "unknown": "超出预测范围：数据不完整，建议人工复核",
+        }
+
+        points = []
+        for bs in bike_stations:
+            sp = _sample(bs["x"], bs["y"])
+            lvl = _risk_level(sp)
+            points.append({
+                "x": bs["x"], "y": bs["y"],
+                "speed": sp,
+                "risk_level": lvl,
+                "suggestion": _sug[lvl],
+                "v_eff": round(v_eff, 2),
+            })
+
+        stats = {"total": len(points), "high": 0, "medium": 0, "low": 0, "calm": 0, "unknown": 0}
+        for p in points:
+            stats[p["risk_level"]] = stats.get(p["risk_level"], 0) + 1
+        stats.pop("unknown", None)
+        if points:
+            # unknown 计入其他（前端展示用原始统计即可）
+            pass
+
+        ranked = sorted([p for p in points if p["speed"] is not None], key=lambda p: p["speed"])
+        recommendations = {
+            "safest": [{"x": p["x"], "y": p["y"], "speed": p["speed"], "risk_level": p["risk_level"]} for p in ranked[:5]],
+            "riskiest": [{"x": p["x"], "y": p["y"], "speed": p["speed"], "risk_level": p["risk_level"]} for p in ranked[-5:][::-1]],
+        }
+
+        # 渲染：风场 + 单车点标记
+        vmin = float(np.nanmin(speed)) if not np.all(np.isnan(speed)) else 0.0
+        vmax = float(np.nanmax(speed)) if not np.all(np.isnan(speed)) else 5.0
+        fig = Figure(figsize=(6.4, 5.4), dpi=110)
+        ax = fig.add_subplot(111)
+        sp_masked = np.where(np.isnan(speed), np.nan, speed)
+        im = ax.imshow(sp_masked, cmap="turbo", vmin=vmin, vmax=vmax, origin="upper",
+                       extent=[grid_x[0], grid_x[-1], grid_y[-1], grid_y[0]])
+        for b in buildings[:200]:
+            poly = b["polygon_local"]
+            if len(poly) >= 3:
+                ax.add_patch(_MplPoly(poly, fc="none", ec="black", lw=0.6, alpha=0.7))
+        _color_map = {"high": "#ef4444", "medium": "#f59e0b", "low": "#10b981", "calm": "#38bdf8"}
+        for p in points:
+            ax.plot(p["x"], p["y"], "o", ms=7, mec="white", mew=1.2,
+                    color=_color_map.get(p["risk_level"], "#94a3b8"), alpha=0.9)
+        ax.set_title(f"单车风暴露评估 — {case_dir.name} | {wind_dir}风 {inlet_speed} m/s\n"
+                     f"倾覆阈值≈{v_eff:.1f} m/s (V_crit={v_crit} × 阵风修正{gust_factor})", fontsize=10)
+        ax.set_aspect("equal"); ax.set_xticks([]); ax.set_yticks([])
+        fig.colorbar(im, ax=ax, label="Wind Speed (m/s)", shrink=0.8)
+        buf = _io.BytesIO()
+        fig.savefig(buf, format="png", dpi=110, bbox_inches="tight", pad_inches=0.1)
+        buf.seek(0)
+        img_b64 = base64.b64encode(buf.read()).decode("utf-8")
+
+        return {
+            "success": True,
+            "case_dir": str(case_dir),
+            "wind_direction": wind_dir,
+            "inlet_speed": inlet_speed,
+            "v_crit": v_crit,
+            "gust_factor": gust_factor,
+            "v_eff": v_eff,
+            "n_trees": n_trees,
+            "n_buildings": len(buildings),
+            "points": points,
+            "stats": stats,
+            "recommendations": recommendations,
+            "grid_bounds": [grid_x[0], grid_y[-1], grid_x[-1], grid_y[0]],
+            "image_base64": f"data:image/png;base64,{img_b64}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"bike-siting CRASH: {e}\n{_tb.format_exc()}")
+        raise HTTPException(500, f"单车选址评估失败: {e}")
+
+
 # ── 旧 predict 端点（保留兼容） ─────────────────────────────────────────────
 
 # Lazy-loaded GNN predictor (loaded on first use to save RAM)
@@ -915,6 +1225,10 @@ async def predict_wind(session_id: str = Query(...), request: Dict[str, Any] = B
 
     with open(geojson_path) as f:
         geojson = json.load(f)
+    try:
+        geojson_path.unlink()  # 临时文件用完即删，避免累积
+    except Exception:
+        pass
 
     # 从 geojson 提取建筑 footprint 和 domain
     buildings_local = []
