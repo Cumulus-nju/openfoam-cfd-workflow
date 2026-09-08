@@ -75,3 +75,14 @@ OSM_TIMEOUT = 90  # seconds (increased for slow connections)
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8765
+
+# ── Auth (登录认证) ───────────────────────────────────────────────────────────
+
+# 用户存储文件（gitignored）；首次启动自动创建默认管理员账号
+AUTH_USERS_FILE = FRONTEND_ROOT / "users.json"
+# 默认管理员账号（仅首次创建时生效；之后请通过修改密码接口更换）
+ADMIN_DEFAULT_USERNAME = "admin"
+ADMIN_DEFAULT_PASSWORD = "urbanwind2026"
+# 会话 Cookie 名称与有效期（秒）
+SESSION_COOKIE_NAME = "uw_session"
+SESSION_TTL = 7 * 24 * 3600   # 7 天

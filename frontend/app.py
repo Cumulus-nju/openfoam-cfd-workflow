@@ -22,12 +22,16 @@ import numpy as np
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-from .config import SERVER_HOST, SERVER_PORT, STATIC_DIR, CFD_CASES_DIR, MODEL_FILE
+from .config import (
+    SERVER_HOST, SERVER_PORT, STATIC_DIR, CFD_CASES_DIR, MODEL_FILE,
+    SESSION_COOKIE_NAME, SESSION_TTL,
+)
+from .auth import auth
 from .schema import SitePlan, BuildingType, SourceType, validate_site_plan
 from .input_adapters import OSMAdapter, DXFAdapter, ManualAdapter, MSBuildingsAdapter, GaodeAdapter, OvertureAdapter
 from .llm_engine import get_engine, GeometryInferrer, InteractiveEditor
@@ -41,8 +45,49 @@ logger = logging.getLogger("urbanwind")
 app = FastAPI(
     title="UrbanWind CFD",
     description="城市微风场智能建模前端",
-    version="0.1.0",
+    version="0.2.0",
 )
+
+# ── 认证中间件：未登录拦截 ────────────────────────────────────────────────────
+
+# 无需登录即可访问的 API（健康检查 + 登录/注册本身）
+PUBLIC_API_PATHS = {"/api/health", "/api/auth/login", "/api/auth/register"}
+
+
+@app.middleware("http")
+async def auth_middleware(request, call_next):
+    """全部 /api/* 与主页面均需登录；静态资源与登录页放行。"""
+    path = request.url.path
+
+    # API 层：除公开路径外一律校验会话 Cookie
+    if path.startswith("/api/"):
+        if path in PUBLIC_API_PATHS:
+            return await call_next(request)
+        user = auth.get_user_by_token(request.cookies.get(SESSION_COOKIE_NAME))
+        if user is None:
+            return JSONResponse(
+                {"detail": "未登录或会话已过期，请重新登录"},
+                status_code=401,
+            )
+        request.state.user = user
+        return await call_next(request)
+
+    # 页面层：主界面需登录；未登录跳转登录页
+    if path == "/":
+        user = auth.get_user_by_token(request.cookies.get(SESSION_COOKIE_NAME))
+        if user is None:
+            return RedirectResponse("/login", status_code=302)
+        return await call_next(request)
+
+    # 已登录用户访问登录页 → 直接进主界面
+    if path == "/login":
+        user = auth.get_user_by_token(request.cookies.get(SESSION_COOKIE_NAME))
+        if user is not None:
+            return RedirectResponse("/", status_code=302)
+        return await call_next(request)
+
+    # 静态资源 /static/*、/favicon.ico 等直接放行（登录页需要样式）
+    return await call_next(request)
 
 # ── Session state ────────────────────────────────────────────────────────────
 
@@ -75,6 +120,81 @@ async def health():
         "model_path": str(MODEL_FILE),
         "sessions": len(_sessions),
     }
+
+
+# ── Auth (登录 / 注册 / 会话管理) ─────────────────────────────────────────────
+
+
+@app.post("/api/auth/register")
+async def register(request: Dict[str, Any] = Body(...)):
+    """注册新账号。Body: {"username": "...", "password": "..."}"""
+    username = str(request.get("username", "")).strip()
+    password = str(request.get("password", ""))
+    ok, msg = auth.register(username, password)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/auth/login")
+async def login(request: Dict[str, Any] = Body(...)):
+    """登录。成功后在响应中种下 HttpOnly 会话 Cookie。"""
+    username = str(request.get("username", "")).strip()
+    password = str(request.get("password", ""))
+    ok, msg, token = auth.login(username, password)
+    if not ok:
+        raise HTTPException(401, msg)
+    resp = JSONResponse({"ok": True, "username": username, "message": msg})
+    resp.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=SESSION_TTL,
+        httponly=True,       # JS 不可读，防 XSS 窃取
+        samesite="lax",      # 本机/局域网 HTTP 演示
+        secure=False,
+        path="/",
+    )
+    return resp
+
+
+@app.post("/api/auth/logout")
+async def logout(request: Request):
+    """退出登录：销毁会话令牌 + 清除 Cookie。"""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    auth.logout(token)
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return resp
+
+
+@app.get("/api/auth/me")
+async def me(request: Request):
+    """当前登录用户信息（需登录，中间件已校验）。"""
+    user = getattr(request.state, "user", None)
+    return {"username": user["username"], "role": user["role"]}
+
+
+@app.post("/api/auth/change-password")
+async def change_password(request: Request, body: Dict[str, Any] = Body(...)):
+    """修改当前用户密码。Body: {"old_password": "...", "new_password": "..."}"""
+    user = getattr(request.state, "user", None)
+    ok, msg = auth.change_password(
+        user["username"],
+        str(body.get("old_password", "")),
+        str(body.get("new_password", "")),
+    )
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"ok": True, "message": msg}
+
+
+@app.get("/api/auth/users")
+async def list_users(request: Request):
+    """用户列表（仅管理员可查看）。"""
+    user = getattr(request.state, "user", None)
+    if user.get("role") != "admin":
+        raise HTTPException(403, "仅管理员可查看用户列表")
+    return {"users": auth.list_users()}
 
 
 # ── Session management ───────────────────────────────────────────────────────
@@ -557,6 +677,11 @@ async def download_case(case_name: str):
 @app.websocket("/ws/chat/{session_id}")
 async def websocket_chat(websocket: WebSocket, session_id: str):
     """WebSocket endpoint for streaming LLM chat."""
+    # 认证：未登录一律拒绝（与 REST 中间件同一会话体系）
+    user = auth.get_user_by_token(websocket.cookies.get(SESSION_COOKIE_NAME))
+    if user is None:
+        await websocket.close(code=1008)  # 策略违规，无有效会话
+        return
     await websocket.accept()
     sess = _get_session(session_id)
 
@@ -611,6 +736,15 @@ async def index():
     if index_path.exists():
         return index_path.read_text(encoding="utf-8")
     return HTMLResponse("<h1>UrbanWind CFD</h1><p>Frontend not built yet.</p>")
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page():
+    """Serve the login/register page."""
+    login_path = STATIC_DIR / "login.html"
+    if login_path.exists():
+        return login_path.read_text(encoding="utf-8")
+    return HTMLResponse("<h1>UrbanWind CFD</h1><p>Login page not built yet.</p>")
 
 
 # Mount static files (CSS, JS)
@@ -962,6 +1096,12 @@ async def bike_siting(request: Dict[str, Any] = Body(...)):
     """
     import base64, io as _io
     import traceback as _tb
+    import matplotlib
+    matplotlib.use("Agg")
+    # 中文字体（评估图标题含中文；Windows 优先微软雅黑，Linux/服务器用 Noto Sans SC）
+    matplotlib.rcParams["font.family"] = "sans-serif"
+    matplotlib.rcParams["font.sans-serif"] = ["Noto Sans SC", "Microsoft YaHei", "DejaVu Sans"]
+    matplotlib.rcParams["axes.unicode_minus"] = False
     from matplotlib.figure import Figure
     from matplotlib.patches import Polygon as _MplPoly
 

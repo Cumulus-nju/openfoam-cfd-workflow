@@ -30,6 +30,79 @@ let bikeLayers = {};
 let chatCollapsed = false;
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// 登录认证 UI（用户徽标 / 退出）
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function initAuthUI() {
+    try {
+        const resp = await fetch('/api/auth/me');
+        if (resp.status === 401) {
+            // 会话失效 → 回登录页（由后端中间件重定向兜底，此处为前端双保险）
+            window.location.href = '/login';
+            return;
+        }
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const chip = document.getElementById('user-chip');
+        const nameEl = document.getElementById('user-name');
+        const avatarEl = document.getElementById('user-avatar');
+        if (chip && nameEl) {
+            nameEl.textContent = data.username;
+            if (avatarEl) avatarEl.textContent = (data.role === 'admin') ? '🛡️' : '👤';
+            chip.style.display = 'inline-flex';
+        }
+    } catch (e) {
+        // 网络异常时静默，页面仍由后端中间件保护
+        console.error('Auth check failed:', e);
+    }
+}
+
+async function logoutUser() {
+    try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (e) { /* 忽略 */ }
+    window.location.href = '/login';
+}
+
+// ── 修改密码 ──
+
+function showPasswordModal() {
+    document.getElementById('pw-old').value = '';
+    document.getElementById('pw-new').value = '';
+    document.getElementById('pw-confirm').value = '';
+    document.getElementById('password-modal').style.display = 'flex';
+}
+
+function hidePasswordModal() {
+    document.getElementById('password-modal').style.display = 'none';
+}
+
+async function changeMyPassword() {
+    var oldP = document.getElementById('pw-old').value;
+    var newP = document.getElementById('pw-new').value;
+    var conf = document.getElementById('pw-confirm').value;
+    if (!oldP || !newP) { showToast('请填写完整', 'error'); return; }
+    if (newP.length < 6) { showToast('新密码至少 6 位', 'error'); return; }
+    if (newP !== conf) { showToast('两次输入的新密码不一致', 'error'); return; }
+    try {
+        const resp = await fetch('/api/auth/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ old_password: oldP, new_password: newP }),
+        });
+        const data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) {
+            showToast(data.detail || '修改失败，请重试', 'error');
+            return;
+        }
+        hidePasswordModal();
+        showToast('密码已修改', 'success');
+    } catch (e) {
+        showToast('无法连接服务器', 'error');
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Initialization
 // Dynamic update button (created by JS, no HTML artifact)
 function getUpdateWindBtn() {
@@ -50,6 +123,9 @@ function getUpdateWindBtn() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function init() {
+    // 认证：未登录直接回登录页（后端中间件也会兜底）
+    initAuthUI();
+
     // Create session
     try {
         const resp = await fetch('/api/session', { method: 'POST' });

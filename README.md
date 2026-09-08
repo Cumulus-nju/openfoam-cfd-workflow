@@ -34,6 +34,15 @@ python -m frontend.main
 
 浏览器自动打开 `http://127.0.0.1:8765`
 
+### 4. 登录
+
+- 首次启动自动创建默认管理员：**admin / urbanwind2026**
+- 登录页支持**注册新账号**（注册后自动登录）
+- 会话有效期 7 天（HttpOnly Cookie），右上角可退出登录
+- 全部 `/api/*` 接口与页面均需登录；`/api/health` 与登录/注册接口除外
+- 账号数据存于 `frontend/users.json`（已 gitignore，密码为 PBKDF2 哈希）
+- 修改密码：右上角菜单 →「修改密码」；管理员可在 `/api/auth/users` 查看注册用户
+
 ---
 
 ## 工作流程

@@ -1370,3 +1370,43 @@ html, body {
     }
     .siting-panel { border-left: none; border-top: 1px solid var(--glass-border); }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   登录认证 — 用户徽标 / 退出按钮
+   ═══════════════════════════════════════════════════════════════════════════ */
+.user-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px 5px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    font-size: 13px;
+    color: var(--text-main);
+    white-space: nowrap;
+}
+
+.user-chip .user-avatar {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.user-chip .user-name {
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.user-chip .btn-sm {
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-muted);
+}
+
+.user-chip .btn-sm:hover {
+    background: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+}

@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
 
     <!-- App CSS -->
-    <link rel="stylesheet" href="/static/css/app.css?v=4">
+    <link rel="stylesheet" href="/static/css/app.css?v=5">
 </head>
 <body>
     <!-- ═══════════════════════════════════════════════════════════════════════
@@ -69,6 +69,13 @@
                     <button class="btn btn-accent" id="btn-predict-case" style="display:none" onclick="showWindParamsModal('fromCase')" title="从CFD案例预测风场">🌪 预测风场</button>
                     <button class="btn" id="btn-save-trees" onclick="saveTreesToCase()" style="display:none" title="保存树木到案例">💾 保存树木</button>
                     <span id="btn-update-wind-container"></span>
+                    <span class="toolbar-divider"></span>
+                    <div class="user-chip" id="user-chip" style="display:none">
+                        <span class="user-avatar" id="user-avatar">👤</span>
+                        <span class="user-name" id="user-name">-</span>
+                        <button class="btn btn-sm" id="btn-password" onclick="showPasswordModal()" title="修改密码">🔑</button>
+                        <button class="btn btn-sm" id="btn-logout" onclick="logoutUser()" title="退出登录">退出</button>
+                    </div>
                 </div>
             </header>
 
@@ -505,6 +512,31 @@
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════════════
+         修改密码 Modal
+         ════════════════════════════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="password-modal" style="display:none">
+        <div class="modal">
+            <h2>🔑 修改密码</h2>
+            <div class="form-group">
+                <label>当前密码</label>
+                <input type="password" id="pw-old" placeholder="请输入当前密码" maxlength="128">
+            </div>
+            <div class="form-group">
+                <label>新密码</label>
+                <input type="password" id="pw-new" placeholder="至少 6 位" maxlength="128">
+            </div>
+            <div class="form-group">
+                <label>确认新密码</label>
+                <input type="password" id="pw-confirm" placeholder="再次输入新密码" maxlength="128">
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="hidePasswordModal()">取消</button>
+                <button class="btn btn-success" onclick="changeMyPassword()">确认修改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
          Toast Container
          ════════════════════════════════════════════════════════════════════ -->
     <div id="toast-container"></div>
@@ -517,7 +549,7 @@
     <!-- Leaflet Draw JS -->
     <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
     <!-- App JS -->
-    <script src="/static/js/app.js?v=38"></script>
+    <script src="/static/js/app.js?v=40"></script>
     <!-- 单车选址板块 JS -->
     <script src="/static/js/siting.js?v=1"></script>
 </body>

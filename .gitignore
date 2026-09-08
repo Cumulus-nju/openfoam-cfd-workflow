@@ -2,6 +2,10 @@
 frontend/models/*.gguf
 frontend/models/llama_bin/
 
+# 用户账号数据（含密码哈希，严禁入库）
+frontend/users.json
+frontend/users.json.tmp
+
 # Generated CFD cases
 cfd_cases/
 
