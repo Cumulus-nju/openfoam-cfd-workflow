@@ -302,7 +302,14 @@
         </header>
 
         <div class="siting-layout">
-            <div id="eval-map"></div>
+            <div id="eval-map">
+                <div id="eval-map-note" style="display:none">
+                    <strong>📌 未叠加地图图层</strong><br>
+                    本地上传数据只有米坐标（无经纬度参考）<br>
+                    评估结果请看右侧面板 / 报告图；<br>
+                    如需地图叠图，请用「GNN 在线」预测（自动关联案例位置）
+                </div>
+            </div>
 
             <aside id="eval-panel">
                 <div class="siting-panel-head">
@@ -679,6 +686,6 @@
     <!-- 单车选址板块 JS -->
     <script src="/static/js/siting.js?v=1"></script>
     <!-- 综合评估板块 JS -->
-    <script src="/static/js/eval.js?v=1"></script>
+    <script src="/static/js/eval.js?v=2"></script>
 </body>
 </html>

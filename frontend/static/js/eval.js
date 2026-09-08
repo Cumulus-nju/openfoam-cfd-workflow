@@ -208,6 +208,8 @@ async function clearEvalScenes() {
     document.getElementById('eval-empty').style.display = '';
     document.getElementById('eval-result').style.display = 'none';
     if (evalOverlay) { evalMap.removeLayer(evalOverlay); evalOverlay = null; }
+    const note = document.getElementById('eval-map-note');
+    if (note) note.style.display = 'none';
     try { await fetch('/api/eval/clear', { method: 'POST' }); } catch (e) { /* 忽略 */ }
     showToast('已清空情景', 'info');
 }
@@ -331,8 +333,10 @@ function setEvalLayer(kind) {
     if (!dataUrl) { clearEvalOverlay(); return; }
 
     const latlng = evalResult.grid_bounds_latlng;
+    const note = document.getElementById('eval-map-note');
     if (latlng) {
         // 经纬度参考可用 → 叠到地图
+        if (note) note.style.display = 'none';
         const bounds = [[latlng[1], latlng[0]], [latlng[3], latlng[2]]];
         if (evalOverlay) evalMap.removeLayer(evalOverlay);
         evalOverlay = L.imageOverlay(dataUrl, bounds, { opacity: 0.55 }).addTo(evalMap);
@@ -340,13 +344,9 @@ function setEvalLayer(kind) {
             evalMap.fitBounds(L.latLngBounds(bounds));
         }
     } else {
-        // 无经纬度 → 仅面板展示（弹出临时浮层）
+        // 无经纬度 → 地图仅提示（评估结果见面板/报告图）
         clearEvalOverlay();
-        showToast('本地上传数据无经纬度参考，评估结果请查看报告图', 'info');
-        const img = document.getElementById('eval-report-img');
-        if (img && img.parentElement) {
-            // 已展示报告图，无需额外处理
-        }
+        if (note) note.style.display = 'block';
     }
 }
 
