@@ -1116,6 +1116,32 @@ function resetOutputDir() {
     updateWslPathPreview();
 }
 
+// 📂 弹出服务器本机文件夹选择窗口，选中后回填输出目录
+async function pickOutputDir() {
+    const current = document.getElementById('gen-output-dir').value.trim();
+    showToast('正在打开文件夹选择窗口...', 'info');
+    try {
+        const resp = await fetch('/api/pick-directory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ initial: current }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) { showToast(data.detail || '打开选择窗口失败', 'error'); return; }
+        if (!data.path) {
+            showToast(data.note || '未选择目录（已取消）', 'info');
+            return;
+        }
+        const input = document.getElementById('gen-output-dir');
+        input.value = data.path;
+        saveOutputDir(data.path);
+        updateWslPathPreview();
+        showToast('已选择: ' + data.path, 'success');
+    } catch (e) {
+        showToast('打开选择窗口失败: ' + e.message, 'error');
+    }
+}
+
 function updateWslPathPreview() {
     const dir = document.getElementById('gen-output-dir').value.trim() || DEFAULT_OUTPUT;
     const name = document.getElementById('gen-name').value.trim() || 'my_campus';

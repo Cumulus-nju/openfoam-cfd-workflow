@@ -1762,6 +1762,76 @@ async def eval_clear():
     return {"success": True, "message": "已清空情景缓存"}
 
 
+# ── 文件夹选择（服务端本地对话框） ─────────────────────────────────────────────
+
+def _pick_folder_worker(initial: str, q):
+    """在独立线程中弹出 Windows 文件夹选择对话框（tkinter 标准库）。"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        root.update()  # 确保窗口初始化完成
+        path = filedialog.askdirectory(
+            parent=root,
+            initialdir=initial or None,
+            title="选择城市风场输出目录",
+            mustexist=False,
+        )
+        root.destroy()
+        q.put(path)
+    except Exception as e:  # 无窗口站/无 tkinter 等
+        q.put(("__error__", str(e)))
+
+
+@app.post("/api/pick-directory")
+async def pick_directory(request: Dict[str, Any] = Body(...)):
+    """弹出服务端本机的文件夹选择窗口，返回所选路径。
+
+    Body: {"initial": "E:/UrbanWind/cfd_cases"}
+    返回: {"path": "..." | null}   — null 表示用户取消或对话框不可用
+    环境变量 UWB_FOLDER_PICKER=0 可禁用（无桌面会话的服务器部署）。
+    """
+    import asyncio
+    import os as _os
+
+    if _os.environ.get("UWB_FOLDER_PICKER", "1") == "0":
+        return {"path": None, "note": "文件夹选择对话框已禁用（UWB_FOLDER_PICKER=0），请手动输入路径"}
+
+    initial = str(request.get("initial", "") or "").strip()
+    # 校验初始路径：不存在或无法访问时去掉，避免对话框报错
+    if initial:
+        p = Path(initial.replace("\\", "/"))
+        if not p.exists():
+            initial = ""
+    if not initial:
+        initial = str(CFD_CASES_DIR) if CFD_CASES_DIR.exists() else str(Path.home())
+
+    # 对话框在线程中运行（阻塞不占用事件循环），结果经线程安全 queue 回传
+    import queue as _queue
+    q: "_queue.Queue" = _queue.Queue()
+    loop = asyncio.get_running_loop()
+
+    def _run():
+        _pick_folder_worker(initial, q)
+
+    await loop.run_in_executor(None, _run)
+    try:
+        result = q.get_nowait()
+    except _queue.Empty:
+        return {"path": None, "note": "未获得选择结果"}
+    if isinstance(result, tuple) and result and result[0] == "__error__":
+        return {"path": None, "note": f"服务器环境不支持图形对话框: {result[1]}"}
+    path = result if isinstance(result, str) else None
+    out = None
+    if path:
+        pp = Path(path)
+        out = str(pp.resolve().as_posix()) if hasattr(pp, "as_posix") else str(pp)
+        out = out.replace("/", "\\")  # Windows 路径回显
+    return {"path": out}
+
+
 # ── Startup ──────────────────────────────────────────────────────────────────
 
 @app.on_event("startup")

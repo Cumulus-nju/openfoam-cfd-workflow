@@ -613,6 +613,7 @@
                 <label>📁 输出目录</label>
                 <div style="display:flex;gap:8px">
                     <input type="text" id="gen-output-dir" placeholder="E:\UrbanWind\cfd_cases" style="flex:1;font-size:13px">
+                    <button class="btn btn-sm" onclick="pickOutputDir()" title="弹出本地文件夹选择窗口" style="flex-shrink:0">📂 浏览…</button>
                     <button class="btn btn-sm" onclick="resetOutputDir()" title="恢复默认" style="flex-shrink:0">↺</button>
                 </div>
                 <p style="font-size:11px;color:var(--text-muted);margin-top:4px">
@@ -674,7 +675,7 @@
     <!-- Leaflet Draw JS -->
     <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
     <!-- App JS -->
-    <script src="/static/js/app.js?v=41"></script>
+    <script src="/static/js/app.js?v=42"></script>
     <!-- 单车选址板块 JS -->
     <script src="/static/js/siting.js?v=1"></script>
     <!-- 综合评估板块 JS -->
