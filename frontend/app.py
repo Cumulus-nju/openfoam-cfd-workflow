@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
@@ -1310,12 +1310,15 @@ def _get_predictor():
     """延迟加载 GNN 模型（首次调用时加载，节省内存）。"""
     global _gnn_predictor
     if _gnn_predictor is None:
-        from .gnn_predictor import GNNSurrogate
-        if _gnn_checkpoint.exists():
+        if not _gnn_checkpoint.exists():
+            logger.warning(f"GNN checkpoint not found: {_gnn_checkpoint}")
+            return None
+        try:
+            from .gnn_predictor import GNNSurrogate
             _gnn_predictor = GNNSurrogate(_gnn_checkpoint)
             logger.info("GNN predictor loaded")
-        else:
-            logger.warning(f"GNN checkpoint not found: {_gnn_checkpoint}")
+        except Exception as e:
+            logger.warning(f"GNN predictor 加载失败: {e}")
             return None
     return _gnn_predictor
 
@@ -1471,6 +1474,292 @@ async def correct_wind(session_id: str = Query(...), request: Dict[str, Any] = B
         "Uy_grid": Uy_c.tolist(),
         "num_trees": len(trees),
     }
+
+
+# ── 综合评估（多情景 → 停放适宜性分析） ────────────────────────────────────────
+
+# 情景缓存（上传/GNN 运行结果；服务重启后失效，需重新上传/运行）
+_eval_scenes: Dict[str, Dict[str, Any]] = {}
+_EVAL_SCENE_MAX = 60
+
+
+def _eval_scene_summary(sid: str, sc: Dict[str, Any]) -> Dict[str, Any]:
+    from .evaluator import detect_grid
+    sx, sy, _ = detect_grid(sc)
+    return {
+        "scene_id": sid,
+        "source": sc.get("source", "upload"),
+        "filename": sc.get("filename"),
+        "wind_direction": sc.get("wind_direction", "N"),
+        "inlet_speed": sc.get("inlet_speed", 5.0),
+        "n_points": int(len(sc["x"])),
+        "bounds": [round(v, 2) for v in sc["bounds"]],
+        "regular": sx is not None,
+    }
+
+
+@app.post("/api/eval/upload")
+async def eval_upload(files: List[UploadFile] = File(...)):
+    """上传本地模拟数据（CSV / zip，支持多文件）→ 解析并缓存为情景。
+
+    支持格式与系统导出格式一致：表头 x,y,Ux,Uy,speed[,wind_direction,inlet_speed]。
+    """
+    from .evaluator import parse_upload
+
+    if not files:
+        raise HTTPException(400, "未上传文件")
+    scenes = []
+    for f in files:
+        data = await f.read()
+        if not data:
+            continue
+        name = f.filename or "upload.csv"
+        try:
+            parsed = parse_upload(data, name)
+        except ValueError as e:
+            raise HTTPException(400, f"{name}: {e}")
+        for sc in parsed:
+            if len(_eval_scenes) >= _EVAL_SCENE_MAX:
+                raise HTTPException(400, "情景缓存已满，请先运行评估或清空情景")
+            sid = uuid.uuid4().hex[:10]
+            sc["scene_id"] = sid
+            sc["source"] = "upload"
+            sc["filename"] = name
+            _eval_scenes[sid] = sc
+            scenes.append(_eval_scene_summary(sid, sc))
+    return {"success": True, "scenes": scenes}
+
+
+@app.post("/api/eval/gnn")
+async def eval_gnn(request: Dict[str, Any] = Body(...)):
+    """GNN 批量预测多风向/风速 → 缓存为情景（同一建筑群，网格一致）。
+
+    Body: {
+        case_dir?: str,        # 与 session_id 二选一；案例目录（含 site_plan.geojson）
+        session_id?: str,      # 当前编辑会话（使用其建筑 plan）
+        scenes: [{wind_direction: "N", inlet_speed: 5.0, weight: 1.0}, ...]
+    }
+    """
+    from .evaluator import grid_to_points
+
+    predictor = _get_predictor()
+    if predictor is None:
+        raise HTTPException(503, "GNN 模型未就绪（需 E:\\UrbanWind\\gnn\\checkpoints\\stage1_best.pt）")
+
+    scenes_cfg = request.get("scenes") or []
+    if not scenes_cfg:
+        raise HTTPException(400, "请至少添加一个风向/风速情景")
+
+    # 建筑来源：case_dir 或 session plan
+    buildings_local = []
+    geojson = None
+    case_dir_raw = str(request.get("case_dir", "") or "")
+    if case_dir_raw:
+        case_dir = Path(case_dir_raw.replace("\\", "/"))
+        gpath = case_dir / "site_plan.geojson"
+        if not gpath.exists():
+            raise HTTPException(400, f"案例中没有 site_plan.geojson: {case_dir}")
+        with open(gpath, encoding="utf-8") as f:
+            geojson = json.load(f)
+    else:
+        sid = str(request.get("session_id", "") or "")
+        if not sid:
+            raise HTTPException(400, "需要 case_dir 或 session_id")
+        plan = _get_session(sid).get("plan")
+        if plan is None:
+            raise HTTPException(400, "当前会话没有建筑数据，请先导入")
+        import tempfile, uuid as _uuid
+        tmp = Path(tempfile.gettempdir()) / f"evalplan_{_uuid.uuid4().hex[:8]}.geojson"
+        plan.to_file(tmp)
+        try:
+            with open(tmp, encoding="utf-8") as f:
+                geojson = json.load(f)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    for feat in geojson.get("features", []):
+        if feat.get("category") != "building":
+            continue
+        coords = feat.get("geometry", {}).get("coordinates", [[]])[0]
+        if not coords:
+            continue
+        props = feat.get("properties", {})
+        h = props.get("height") or props.get("inferred_height") or 10.0
+        buildings_local.append({"polygon_local": [[p[0], p[1]] for p in coords], "height": float(h)})
+    if not buildings_local:
+        raise HTTPException(400, "没有有效的建筑数据")
+
+    # 经纬度 → 米（与 predict-from-case 同一参考点，便于地图叠加）
+    all_x = [p[0] for b in buildings_local for p in b["polygon_local"]]
+    all_y = [p[1] for b in buildings_local for p in b["polygon_local"]]
+    lon0 = lat0 = None
+    if abs((max(all_x) + min(all_x)) / 2) > 10:
+        lon0 = (min(all_x) + max(all_x)) / 2
+        lat0 = (min(all_y) + max(all_y)) / 2
+        cos_lat = np.cos(np.radians(lat0))
+        mlng = 111320.0 * max(cos_lat, 0.3); mlat = 111320.0
+        buildings_local = [{
+            "polygon_local": [((p[0] - lon0) * mlng, (p[1] - lat0) * mlat) for p in b["polygon_local"]],
+            "height": b["height"]} for b in buildings_local]
+        all_x = [p[0] for b in buildings_local for p in b["polygon_local"]]
+        all_y = [p[1] for b in buildings_local for p in b["polygon_local"]]
+
+    margin = max(40, (max(all_x) - min(all_x)) * 0.3)
+    grid_size = 250
+    grid_x = np.linspace(min(all_x) - margin, max(all_x) + margin, grid_size)
+    grid_y = np.linspace(max(all_y) + margin, min(all_y) - margin, grid_size)
+
+    # latlng bounds（若建筑为经纬度而来）
+    latlng_bounds = None
+    if lon0 is not None:
+        def _m2lon(x): return lon0 + x / (111320.0 * max(np.cos(np.radians(lat0)), 0.3))
+        def _m2lat(y): return lat0 + y / 111320.0
+        latlng_bounds = [_m2lon(grid_x[0]), _m2lat(grid_y[-1]),
+                         _m2lon(grid_x[-1]), _m2lat(grid_y[0])]
+
+    made = []
+    for cfg in scenes_cfg:
+        wd = str(cfg.get("wind_direction", "N")).upper()
+        vi = float(cfg.get("inlet_speed", 5.0))
+        Ux, Uy, speed = predictor.predict(buildings_local, wd, vi, grid_x, grid_y)
+        # 记录为点云场景（重采样时 detect_grid 自动还原规则网格）
+        GX, GY = np.meshgrid(grid_x, grid_y)
+        sc = grid_to_points(GX.ravel(), GY.ravel(), np.nan_to_num(Ux).ravel(),
+                            np.nan_to_num(Uy).ravel(), np.nan_to_num(speed).ravel(),
+                            wd, vi)
+        sc["latlng_bounds"] = latlng_bounds
+        sc["speed"] = np.where(np.isnan(speed.ravel()), np.nan, speed.ravel())
+        if len(_eval_scenes) >= _EVAL_SCENE_MAX:
+            raise HTTPException(400, "情景缓存已满，请先运行评估或清空情景")
+        sid = uuid.uuid4().hex[:10]
+        sc["scene_id"] = sid
+        sc["source"] = "gnn"
+        sc["filename"] = f"gnn_{wd}_{vi:g}mps"
+        _eval_scenes[sid] = sc
+        made.append(_eval_scene_summary(sid, sc))
+        made[-1]["speed_range"] = [round(float(np.nanmin(speed)), 2),
+                                   round(float(np.nanmax(speed)), 2)]
+    return {"success": True, "scenes": made, "grid_bounds_latlng": latlng_bounds}
+
+
+@app.post("/api/eval/run")
+async def eval_run(request: Dict[str, Any] = Body(...)):
+    """多情景综合分析：加权平均 + 静风/强风频率 + 停放适宜性分级 + 报告图。
+
+    Body: {
+        scene_ids: [...],
+        weights?: [1.0, ...],          # 与 scene_ids 对齐
+        v_crit?, gust_factor?, high_factor?, medium_factor?, calm_speed?
+    }
+    """
+    import traceback as _tb
+    from .evaluator import (
+        aggregate, build_reference_grid, render_report, resample_scene, top_regions,
+    )
+
+    scene_ids = request.get("scene_ids") or []
+    if not scene_ids:
+        raise HTTPException(400, "请先添加情景")
+    if len(scene_ids) > 40:
+        raise HTTPException(400, "情景数量过多（≤40）")
+
+    scenes = []
+    for sid in scene_ids:
+        sc = _eval_scenes.get(sid)
+        if sc is None:
+            raise HTTPException(400, f"情景 {sid} 不在缓存（服务可能已重启，请重新上传/运行）")
+        scenes.append(sc)
+
+    weights = request.get("weights") or [1.0] * len(scenes)
+    try:
+        grid_x, grid_y = build_reference_grid(scenes)
+        resampled = []
+        for sc in scenes:
+            grid = resample_scene(sc, grid_x, grid_y)
+            resampled.append({"speed_grid": grid,
+                              "wind_direction": sc["wind_direction"],
+                              "inlet_speed": sc["inlet_speed"]})
+        res = aggregate(
+            resampled,
+            [float(w) for w in weights],
+            v_crit=float(request.get("v_crit", 11.7)),
+            gust_factor=float(request.get("gust_factor", 0.67)),
+            high_factor=float(request.get("high_factor", 0.8)),
+            medium_factor=float(request.get("medium_factor", 0.5)),
+            calm_speed=float(request.get("calm_speed", 1.5)),
+        )
+    except Exception as e:
+        logger.error(f"eval-run CRASH: {e}\n{_tb.format_exc()}")
+        raise HTTPException(500, f"评估计算失败: {e}")
+
+    def _ser(a, nd: int = 2):
+        def f(v):
+            return None if np.isnan(v) else round(float(v), nd)
+        return [[f(v) for v in row] for row in a]
+
+    mean = res["mean"]; calm = res["calm_freq"]; strong = res["strong_freq"]
+    grade = res["grade"]
+    scene_stats = []
+    for sc in resampled:
+        g = sc["speed_grid"]
+        scene_stats.append({
+            "wind_direction": sc["wind_direction"],
+            "inlet_speed": sc["inlet_speed"],
+            "min": None if np.isnan(np.nanmin(g)) else round(float(np.nanmin(g)), 2),
+            "max": None if np.isnan(np.nanmax(g)) else round(float(np.nanmax(g)), 2),
+            "mean": None if np.isnan(np.nanmean(g)) else round(float(np.nanmean(g)), 2),
+        })
+
+    stats = res["stats"]
+    png = render_report(mean, calm, strong, grade, grid_x, grid_y, stats,
+                        [{"wind_direction": s["wind_direction"], "inlet_speed": s["inlet_speed"]}
+                         for s in resampled])
+
+    latlng_bounds = None
+    for sc in scenes:
+        if sc.get("latlng_bounds"):
+            latlng_bounds = sc["latlng_bounds"]
+            break
+
+    return {
+        "success": True,
+        "grid_bounds": [float(grid_x[0]), float(grid_y[-1]), float(grid_x[-1]), float(grid_y[0])],
+        "grid_bounds_latlng": latlng_bounds,
+        "grid_size": [len(grid_x), len(grid_y)],
+        "stats": stats,
+        "scene_stats": scene_stats,
+        "mean_grid": _ser(mean),
+        "calm_freq_grid": _ser(calm, 3),
+        "strong_freq_grid": _ser(strong, 3),
+        "grade_grid": _ser(grade, 0),
+        "top_suitable": top_regions(grade, 1),
+        "top_risky": top_regions(grade, 3),
+        "report_png": png,
+    }
+
+
+@app.get("/api/eval/export/{scene_id}")
+async def eval_export(scene_id: str):
+    """导出情景数据为标准 CSV（与上传格式一致，可再次上传）。"""
+    from .evaluator import scene_to_csv
+    sc = _eval_scenes.get(scene_id)
+    if sc is None:
+        raise HTTPException(404, "情景不存在")
+    csv_text = scene_to_csv(sc)
+    label = Path(sc.get("filename") or "scene").stem
+    fname = f"{label}_{sc['wind_direction']}_{sc['inlet_speed']:g}mps.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.post("/api/eval/clear")
+async def eval_clear():
+    """清空评估情景缓存。"""
+    _eval_scenes.clear()
+    return {"success": True, "message": "已清空情景缓存"}
 
 
 # ── Startup ──────────────────────────────────────────────────────────────────

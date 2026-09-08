@@ -43,6 +43,16 @@ python -m frontend.main
 - 账号数据存于 `frontend/users.json`（已 gitignore，密码为 PBKDF2 哈希）
 - 修改密码：右上角菜单 →「修改密码」；管理员可在 `/api/auth/users` 查看注册用户
 
+### 5. 综合评估（📍 场景栏）
+
+多情景风环境分析 → 共享单车停放适宜性分级：
+
+- **数据源**：① 本地上传模拟数据（CSV / zip，与系统导出格式互认：`x,y,Ux,Uy,speed[,wind_direction,inlet_speed]`，OpenFOAM 切片脚本输出可直接上传；文件名 `case_N_5.0.csv` 自动识别风向风速）；② GNN 在线批量预测（选案例 + 风速 → 自动跑 N/S/E/W 四风向）
+- **分析**：各情景按其权重**加权平均风速**、**静风频率**（v<1.5 m/s）、**强风频率**（v>阵风修正阈值 7.84 m/s）→ 停放适宜性分级（🔴高风险 / 🟠中风险 / 🟢适宜 / 🔵静风区）
+- **产出**：地图图层切换（分级/平均/静风频率/强风频率）、分级占比统计、每情景风速表、最适宜/最高风险 Top 区域、四面板评估报告图（可下载 PNG）
+- **导出**：任意情景可导出标准 CSV（再上传即恢复，保证"系统导出格式=上传格式"）
+- API：`POST /api/eval/upload`、`POST /api/eval/gnn`、`POST /api/eval/run`、`GET /api/eval/export/{id}`、`POST /api/eval/clear`
+
 ---
 
 ## 工作流程

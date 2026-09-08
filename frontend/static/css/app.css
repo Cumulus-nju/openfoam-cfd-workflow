@@ -1410,3 +1410,203 @@ html, body {
     background: rgba(239, 68, 68, 0.25);
     color: #fca5a5;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   综合评估板块（多情景风环境分析）
+   ═══════════════════════════════════════════════════════════════════════════ */
+.eval-count {
+    font-size: 12px;
+    color: var(--accent-cyan);
+    font-weight: 600;
+    padding: 4px 10px;
+    background: rgba(6, 182, 212, 0.10);
+    border-radius: 999px;
+}
+
+.eval-source-tabs {
+    display: flex;
+    gap: 6px;
+    margin: 10px 0 12px;
+}
+
+.eval-source-tab {
+    flex: 1;
+    padding: 8px 0;
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.eval-source-tab.active {
+    color: #fff;
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.35), rgba(34, 197, 94, 0.25));
+    border-color: rgba(6, 182, 212, 0.5);
+}
+
+.eval-source-box {
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px dashed var(--glass-border);
+    border-radius: 10px;
+    margin-bottom: 12px;
+}
+
+.btn-upload {
+    width: 100%;
+    justify-content: center;
+    padding: 12px;
+    font-size: 13px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px dashed var(--glass-border);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.btn-upload:hover { background: rgba(6, 182, 212, 0.12); color: var(--accent-cyan); }
+
+.eval-hint {
+    margin-top: 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.7;
+}
+
+.eval-hint code {
+    background: var(--bg-primary);
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: var(--accent-cyan);
+}
+
+.eval-hint-inline { font-size: 11px; color: var(--text-muted); font-weight: 400; }
+
+.eval-scenes-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 10px 0 8px;
+}
+
+.eval-scene-row {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+}
+
+.eval-scene-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.eval-src { font-size: 13px; }
+
+.eval-scene-name {
+    flex: 1;
+    font-size: 12.5px;
+    color: var(--text-main);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.eval-scene-pts { font-size: 11px; color: var(--text-muted); }
+
+.eval-scene-body {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.eval-windtag {
+    flex: 1;
+    font-size: 11.5px;
+    color: var(--accent-cyan);
+    background: rgba(6, 182, 212, 0.10);
+    border-radius: 6px;
+    padding: 3px 8px;
+    white-space: nowrap;
+}
+
+.eval-wtag { font-size: 11px; color: var(--text-muted); }
+
+.eval-weight {
+    width: 64px;
+    padding: 4px 6px;
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--text-main);
+    background: var(--bg-primary);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+}
+
+.btn-danger-icon { color: #f87171; }
+.btn-danger-icon:hover { background: rgba(239, 68, 68, 0.2); }
+
+.eval-layer-switch {
+    display: flex;
+    gap: 4px;
+    margin: 10px 0;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 8px;
+    padding: 4px;
+}
+
+.eval-layer-btn {
+    flex: 1;
+    padding: 6px 0;
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.eval-layer-btn.active {
+    color: #fff;
+    background: rgba(6, 182, 212, 0.3);
+}
+
+.eval-scene-stats { margin-bottom: 10px; }
+
+.eval-stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.eval-stats-table th, .eval-stats-table td {
+    padding: 5px 6px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.eval-stats-table th { color: var(--text-muted); font-weight: 500; }
+
+.eval-report-wrap {
+    margin-top: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    padding: 10px;
+}
+
+.eval-report-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+}

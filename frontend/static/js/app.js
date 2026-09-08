@@ -162,11 +162,14 @@ let windMapReady = false;
 function showView(name) {
     document.getElementById('wind-module').style.display = (name === 'wind') ? '' : 'none';
     document.getElementById('siting-module').style.display = (name === 'siting') ? '' : 'none';
+    document.getElementById('eval-module').style.display = (name === 'eval') ? '' : 'none';
     // 场景导航高亮
     var w = document.getElementById('scene-btn-wind');
     var s = document.getElementById('scene-btn-siting');
+    var e = document.getElementById('scene-btn-eval');
     if (w) w.classList.toggle('active', name === 'wind');
     if (s) s.classList.toggle('active', name === 'siting');
+    if (e) e.classList.toggle('active', name === 'eval');
 }
 
 function switchScene(name) {
@@ -176,6 +179,9 @@ function switchScene(name) {
     } else if (name === 'siting') {
         showView('siting');
         if (window.ensureSitingMap) setTimeout(window.ensureSitingMap, 50);
+    } else if (name === 'eval') {
+        showView('eval');
+        if (window.ensureEvalMap) setTimeout(window.ensureEvalMap, 50);
     }
 }
 
