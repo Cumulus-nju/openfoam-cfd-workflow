@@ -507,8 +507,10 @@ function updateDroneVcritEff() {
     const eff = document.getElementById('drone-vcrit-eff');
     if (!inp || !eff) return;
     const v = parseFloat(inp.value);
-    eff.textContent = isNaN(v) ? '请输入有效阈值'
-        : `禁飞阈值 ${(v * 0.67).toFixed(2)} m/s · 谨慎起点 ${(v * 0.67 * 0.85).toFixed(2)} m/s`;
+    if (isNaN(v) || v <= 0) { eff.textContent = '请输入有效阈值'; return; }
+    // 无人机暂时**不再套用单车的 0.67 折减**（那个因子的来历待核实），
+    // 直接把 v_crit 当作判决阈值；谨慎起点仍按 0.85 分级。
+    eff.textContent = `判决阈值 ${v.toFixed(2)} m/s · 谨慎起点 ${(v * 0.85).toFixed(2)} m/s`;
 }
 
 /** 米坐标 → WGS84；无地理参考时返回 null（此时只能看面板数据） */

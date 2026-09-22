@@ -1928,7 +1928,7 @@ async def eval_route(request: Dict[str, Any] = Body(...)):
     mean = field["res"]["mean"]
     grid_x, grid_y = field["grid_x"], field["grid_y"]
 
-    v_eff = ctx["v_crit"] * ctx["gust_factor"]      # 阵风修正后的抗风阈值
+    v_eff = ctx["v_crit"] * ctx["gust_factor"]      # 换算到「平均风速」口径的判决阈值
     strong_th = v_eff * ctx["high_factor"]          # 谨慎飞行起点
     calm_th = ctx["calm_speed"]
 

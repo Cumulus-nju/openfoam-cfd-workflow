@@ -28,7 +28,16 @@ import numpy as np
 # ── 共享参数（与 bike-siting 一致，可被请求覆盖） ────────────────────────────
 
 V_CRIT = 11.7        # 单车倾覆临界风速 m/s（bike_wind_overturning_model.tex）
-GUST_FACTOR = 0.67   # 阵风修正 (7.8/11.7)
+# ── 关于 gust_factor 的口径，务必别读反（2026-09-22 弄清）────────────────────
+# 阵风 > 平均风（G = 阵风/平均 > 1，城市下垫面常用 1.5~2.0）。
+# 若 V_CRIT=11.7 是【阵风】口径的倾覆临界值，而 CFD/上传数据给的是【平均】风速，
+# 那么「平均风速达多少就危险」= V_CRIT / G ≈ 11.7 / 1.5 ≈ 7.8 m/s。
+# 代码里写作 v_eff = v_crit * gust_factor = 11.7 * 0.67 = 7.84 m/s，
+# 即 **gust_factor 实际存的是 1/G（<1）**，数值对应 G≈1.49。
+# ⚠ 注意注释旧写法 "7.8/11.7" 字面是 7.8÷11.7，容易被理解成「7.8 是阵风、11.7 是平均」，
+#   那是反的。正确关系：11.7 是阵风口径，7.8 是换算到平均口径后的判决阈值。
+# 若 V_CRIT 本来就是【平均】口径，则应取 gust_factor = 1.0（不折减）。
+GUST_FACTOR = 0.67   # = 1/G，G≈1.49（阵风→平均的口径换算，不是把阈值变严）
 HIGH_FACTOR = 0.8    # 高风险阈值系数（相对阵风修正阈值）
 MEDIUM_FACTOR = 0.5  # 中风险阈值系数
 CALM_SPEED = 1.5     # 静风判据 m/s
@@ -63,10 +72,12 @@ CONTEXTS: Dict[str, Dict[str, Any]] = {
         "label": "无人机航线适飞性",
         "unit_actor": "无人机",
         "ground": "适飞",
-        # 机型抗风等级：6 级（≤13.8 m/s）为多数消费级/行业级机型上限，
-        # 取 12.0 作临界、0.67 折减与单车保持同构（阵风修正思路一致）。
+        # 机型抗风等级：6 级（≤13.8 m/s）为多数消费级/行业级机型上限。
+        # ⚠ 这里**不再套用单车的 0.67 折减**：厂商标称的抗风能力本身就是一个风速，
+        #   没有「阵风→平均」换算的公开依据。若你的机型标称值指的是**阵风上限**，
+        #   才需要按 gust_factor 换成平均口径。
         "v_crit": 12.0,
-        "gust_factor": 0.67,
+        "gust_factor": 1.0,
         "high_factor": 0.85,
         "medium_factor": 0.55,
         "calm_speed": 2.0,
@@ -530,6 +541,14 @@ def _altitude_factor(altitude_m: float, z_ref: float = Z_REF,
     if altitude_m <= 0:
         return 1.0
     return float((altitude_m / z_ref) ** alpha)
+
+
+def _effective_threshold(ctx: Dict[str, Any]) -> float:
+    """把情境的 v_crit 换算成「平均风速口径」的判决阈值。
+
+    gust_factor 存的是 1/G（见文件头 GUST_FACTOR 的说明）。
+    """
+    return float(ctx["v_crit"]) * float(ctx.get("gust_factor", 1.0))
 
 
 def sample_route(wind: np.ndarray, grid_x: np.ndarray, grid_y: np.ndarray,
