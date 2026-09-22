@@ -84,6 +84,19 @@ def resolve_context(name: str) -> Dict[str, Any]:
 
 WD_VEC = {"N": (0.0, 1.0), "S": (0.0, -1.0), "E": (1.0, 0.0), "W": (-1.0, 0.0)}
 
+# 中文风向名 → 字母。16 方位里 "北风" 是 "西北风/东北风" 的前缀，
+# 所以按名字长度从长到短排，先匹配长的（西北风 优于 西风/北风）。
+_CN_WIND_DIRS = [
+    ("西北偏北", "NNW"), ("西北偏西", "WNW"),
+    ("东北偏北", "NNE"), ("东北偏东", "ENE"),
+    ("西南偏南", "SSW"), ("西南偏西", "WSW"),
+    ("东南偏南", "SSE"), ("东南偏东", "ESE"),
+    ("西北风", "NW"), ("东北风", "NE"), ("西南风", "SW"), ("东南风", "SE"),
+    ("北风", "N"), ("南风", "S"), ("东风", "E"), ("西风", "W"),
+]
+_VALID_WD = {"N", "S", "E", "W", "NE", "NW", "SE", "SW",
+             "NNE", "ENE", "ESE", "SSE", "SSW", "WSW", "WNW", "NNW"}
+
 
 # ── CSV 解析 ──────────────────────────────────────────────────────────────────
 
@@ -135,8 +148,14 @@ def _parse_float(v: str) -> Optional[float]:
 
 
 def parse_scene_csv(text: str, filename: str = "", wind_dir: str = "",
-                    inlet_speed: Optional[float] = None) -> Dict[str, Any]:
-    """解析 CSV 文本 → 标准场景数据（点云 + 规则网格检测）。"""
+                    inlet_speed: Optional[float] = None,
+                    extra_hint: str = "") -> Dict[str, Any]:
+    """解析 CSV 文本 → 标准场景数据（点云 + 规则网格检测）。
+
+    extra_hint：额外的命名线索。OpenFOAM 导出的文件名常是无信息的
+    （如统一叫 cell_data_1.5m.csv），风向风速只在**上级目录名**里，
+    所以调用方把目录名一并传进来一起识别。
+    """
     lines = [ln for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
     if len(lines) < 2:
         raise ValueError("CSV 内容为空或只有一行")
@@ -233,7 +252,25 @@ def parse_scene_csv(text: str, filename: str = "", wind_dir: str = "",
     #  且相邻 token 为数字（如 case_N_5.0.csv、case_5_N.csv、N5.csv）
     auto_wd = auto_wd or ""
     stem = Path(filename).stem if filename else ""
-    tokens = [t for t in re.split(r"[_\-\s\.]+", stem) if t]
+    # 合并线索：文件名 + 上级目录（目录在前，文件名优先识别？→ 方向取先命中的，
+    # 文件名通常更精确，所以先试文件名，没有再试目录）
+    hint = stem
+    if extra_hint:
+        hint = stem + " " + extra_hint
+
+    # ① 中文风向 + 相邻风速（如 西区_西北风_7ms、西区_西风_7ms）
+    #    16 方位中文名里的 "北风/南风/东风/西风" 是前缀，必须用全名精确匹配
+    for cn_name, letter in _CN_WIND_DIRS:
+        if cn_name in hint:
+            if not auto_wd:
+                auto_wd = letter
+            if auto_vi is None:
+                m = re.search(re.escape(cn_name) + r"[_\-\s]*(\d+(?:\.\d+)?)", hint)
+                if m:
+                    auto_vi = float(m.group(1))
+            break
+
+    tokens = [t for t in re.split(r"[_\-\s\.]+", hint) if t]
     for i, tok in enumerate(tokens):
         if len(tok) == 1 and tok.upper() in ("N", "S", "E", "W"):
             # 方向 token 后跟数字，或前面是数字
@@ -247,10 +284,10 @@ def parse_scene_csv(text: str, filename: str = "", wind_dir: str = "",
                     auto_wd = tok.upper()
                 if auto_vi is None:
                     auto_vi = float(tokens[i - 1])
-    # 合理范围校验（0.5–60 m/s，方向仅限四方位）
+    # 合理范围校验（0.5–60 m/s；方向限 16 方位）
     if auto_vi is not None and not (0.5 <= auto_vi <= 60):
         auto_vi = None
-    if auto_wd not in ("N", "S", "E", "W", ""):
+    if auto_wd and auto_wd.upper() not in _VALID_WD:
         auto_wd = ""
 
     return {
@@ -281,10 +318,17 @@ def parse_upload(files: bytes, filename: str) -> List[Dict[str, Any]]:
             if info.is_dir() or not info.filename.lower().endswith((".csv", ".txt")):
                 continue
             text = zf.read(info).decode("utf-8", errors="replace")
-            results.append(parse_scene_csv(text, Path(info.filename).name))
+            # zip 内的路径常带目录（如 西区_西北风_7ms/cell_data.csv），目录名里有风向风速
+            parts = [p for p in Path(info.filename).parts]
+            hint = " ".join(parts[:-1]) if len(parts) > 1 else ""
+            results.append(parse_scene_csv(text, Path(info.filename).name, extra_hint=hint))
     else:
         text = files.decode("utf-8", errors="replace")
-        results.append(parse_scene_csv(text, filename))
+        # 单文件上传时文件名常无信息（如 cell_data_1.5m.csv），
+        # 若调用方传了带目录的路径，就用上层目录名一起识别
+        p = Path(filename)
+        hint = " ".join(p.parts[:-1]) if len(p.parts) > 1 else ""
+        results.append(parse_scene_csv(text, p.name, extra_hint=hint))
     return results
 
 

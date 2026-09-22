@@ -144,6 +144,17 @@ function ensureDroneMap() {
         if (droneRouteDrawing) finishRouteDraw();
     });
 
+    // 自定义 v_crit 时同步显示换算后的阈值
+    const vInp = document.getElementById('drone-vcrit');
+    if (vInp) {
+        vInp.addEventListener('input', function () {
+            const sel = document.getElementById('drone-vcrit-preset');
+            if (sel) sel.value = 'custom';
+            updateDroneVcritEff();
+        });
+        updateDroneVcritEff();
+    }
+
     setTimeout(() => droneMap.invalidateSize(), 100);
 }
 
@@ -163,9 +174,12 @@ function switchEvalSource(name) {
 
 // ── 情景：本地上传 ──────────────────────────────────────────────────────────
 
-/** 取情景的地理/网格范围（无人机航线绘制需要），无需先跑整场评估 */
+/** 取情景的地理/网格范围（无人机航线绘制需要），无需先跑整场评估。
+ *
+ * 注意：每次都重新取。早先版本加了 `if (已有) return` 的短路，
+ * 结果换一批范围不同的情景后仍沿用旧范围 → 米坐标↔经纬度换算静默出错
+ * （航线画错位置、评估结果全错且不报错）。 */
 async function fetchEvalBounds() {
-    if (droneGridBounds && droneGridBoundsLatLng) return true;
     try {
         const resp = await fetch('/api/eval/bounds', {
             method: 'POST',
@@ -176,6 +190,11 @@ async function fetchEvalBounds() {
         if (d && d.success && d.grid_bounds) {
             droneGridBounds = d.grid_bounds;
             droneGridBoundsLatLng = d.grid_bounds_latlng || null;
+            // 范围变了 → 之前画的航线坐标已失效，清掉避免用错参考系评估
+            if (typeof droneRoute !== 'undefined' && droneRoute.length) {
+                clearDroneRoute();
+                showToast('数据范围已更新，之前绘制的航线已清空，请重新绘制', 'info');
+            }
             if (assessCtx === 'drone' && typeof fitDroneMapToData === 'function') fitDroneMapToData();
             return true;
         }
@@ -474,6 +493,23 @@ let routeSegLayer = null;      // 分级着色航段
 let droneRouteResult = null;
 let droneGridBounds = null;    // 上一次区域评估的网格范围（米坐标）
 let droneGridBoundsLatLng = null;
+
+/** 机型抗风档位选择（参考值；用户也可直接改 v_crit 数字） */
+function applyDronePreset(v) {
+    const inp = document.getElementById('drone-vcrit');
+    if (!inp) return;
+    if (v !== 'custom') inp.value = v;
+    updateDroneVcritEff();
+}
+
+function updateDroneVcritEff() {
+    const inp = document.getElementById('drone-vcrit');
+    const eff = document.getElementById('drone-vcrit-eff');
+    if (!inp || !eff) return;
+    const v = parseFloat(inp.value);
+    eff.textContent = isNaN(v) ? '请输入有效阈值'
+        : `禁飞阈值 ${(v * 0.67).toFixed(2)} m/s · 谨慎起点 ${(v * 0.67 * 0.85).toFixed(2)} m/s`;
+}
 
 /** 米坐标 → WGS84；无地理参考时返回 null（此时只能看面板数据） */
 function droneXYToLatLng(x, y) {

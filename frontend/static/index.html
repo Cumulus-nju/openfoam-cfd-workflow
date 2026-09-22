@@ -289,10 +289,30 @@
                                     <input type="number" id="drone-altitude" value="60" step="5" min="5" max="500">
                                 </div>
                                 <div class="form-group">
-                                    <label>机型抗风阈值 (m/s)</label>
-                                    <input type="number" id="drone-vcrit" value="12.0" step="0.5" min="3" max="30">
+                                    <label>机型抗风档位</label>
+                                    <select id="drone-vcrit-preset" onchange="applyDronePreset(this.value)">
+                                        <option value="10.7">抗风 5 级 · 10.7 m/s（Mini / 消费级）</option>
+                                        <option value="12.0" selected>抗风 6 级 · 12.0 m/s（Mavic 3 级）</option>
+                                        <option value="13.8">抗风 6 级上限 · 13.8 m/s（M300 / 行业级）</option>
+                                        <option value="17.1">抗风 7 级 · 17.1 m/s（重载 / 系留）</option>
+                                        <option value="custom">自定义…</option>
+                                    </select>
                                 </div>
                             </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>抗风阈值 v_crit (m/s)</label>
+                                    <input type="number" id="drone-vcrit" value="12.0" step="0.5" min="3" max="30">
+                                </div>
+                                <div class="form-group">
+                                    <label>&nbsp;</label>
+                                    <span id="drone-vcrit-eff" class="eval-hint-inline">禁飞阈值 8.04 m/s</span>
+                                </div>
+                            </div>
+                            <p class="eval-hint-inline" id="drone-vcrit-note">
+                                档位为<b>常见机型参考值</b>，请按你实际机型标称抗风能力填写 v_crit；
+                                禁飞阈值 = v_crit × 0.67（阵风修正）。
+                            </p>
                             <div class="form-row">
                                 <div class="form-group">
                                     <label>&nbsp;</label>
