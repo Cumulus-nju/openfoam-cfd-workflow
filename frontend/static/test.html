@@ -16,7 +16,7 @@ img{max-width:100%;border-radius:8px;margin-top:10px}
 <div id="result"></div>
 
 <script>
-var CASE = 'E:/UrbanWind/cfd_cases/my_campus';
+var CASE = 'my_campus';  // 只传案例名，后端按 CFD_CASES_DIR 解析
 
 async function doPredict() {
     var r = document.getElementById('result');

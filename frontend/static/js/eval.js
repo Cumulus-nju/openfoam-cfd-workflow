@@ -87,10 +87,11 @@ async function loadEvalCases() {
         window._evalCasesLoaded = true;
         if (!data.success) throw new Error(data.detail || '加载失败');
         const cases = data.cases || [];
+        window._evalCasesCache = cases;
         select.innerHTML = '';
         const ph = document.createElement('option');
         ph.value = '';
-        ph.textContent = cases.length ? '选择一个 CFD 案例' : '暂无案例（需 E 盘案例库在线，或用本地上传）';
+        ph.textContent = cases.length ? '选择一个 CFD 案例' : '暂无案例（请先在「城市风场模拟」中生成，或用本地上传）';
         select.appendChild(ph);
         for (const c of cases) {
             const opt = document.createElement('option');
@@ -101,9 +102,15 @@ async function loadEvalCases() {
         if (!cases.length) { window._evalCasesClean = true; }
     } catch (e) {
         window._evalCasesLoaded = true;
-        select.innerHTML = '<option value="">案例列表不可用（E 盘离线？）</option>';
+        select.innerHTML = '<option value="">案例列表不可用</option>';
         showToast('案例列表加载失败: ' + e.message, 'error');
     }
+}
+
+// 后端 /api/list-cases 已返回 case_dir；退回只传案例名由后端解析。前端不拼绝对路径。
+function evalCaseDirFromName(name) {
+    const c = (window._evalCasesCache || []).find(x => x.name === name);
+    return (c && c.case_dir) ? c.case_dir : name;
 }
 
 async function runGnnScenes() {
@@ -120,7 +127,7 @@ async function runGnnScenes() {
         const resp = await fetch('/api/eval/gnn', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ case_dir: 'E:/UrbanWind/cfd_cases/' + caseName, scenes }),
+            body: JSON.stringify({ case_dir: evalCaseDirFromName(caseName), scenes }),
         });
         const data = await resp.json();
         if (!resp.ok) { showToast(data.detail || 'GNN 预测失败', 'error'); return; }

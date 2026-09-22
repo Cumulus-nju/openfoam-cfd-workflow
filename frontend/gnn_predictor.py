@@ -14,8 +14,16 @@ from pathlib import Path
 import numpy as np
 import torch
 
-# 复用训练代码的特征工程
-_GNN_DIR = Path(r"E:\UrbanWind\gnn")
+from .config import GNN_DIR
+
+# 复用训练代码的特征工程。GNN 训练代码目录由配置决定（默认 <项目根>/gnn），
+# 可用环境变量 URBANWIND_GNN_DIR 指向别处，不写死盘符。
+_GNN_DIR = GNN_DIR
+if not (Path(_GNN_DIR) / "model.py").exists():
+    raise ImportError(
+        f"GNN 训练代码未找到：{_GNN_DIR} 下缺少 model.py / dataset.py / config.py。"
+        "请把 GNN 训练代码放到 <项目根>/gnn，或设置环境变量 URBANWIND_GNN_DIR 指向它。"
+    )
 if str(_GNN_DIR) not in sys.path:
     sys.path.insert(0, str(_GNN_DIR))
 

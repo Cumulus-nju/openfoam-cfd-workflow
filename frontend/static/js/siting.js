@@ -185,8 +185,10 @@ async function runBikeSiting() {
 }
 
 function rawCaseDirFromName(name) {
-    // 与后端 CFD_CASES_DIR 一致：E:/UrbanWind/cfd_cases/<name>
-    return `E:/UrbanWind/cfd_cases/${name}`;
+    // 优先用后端 /api/list-cases 返回的 case_dir；退回只传案例名，由后端按配置解析。
+    // 前端不拼任何绝对路径 —— 换机器/换盘符都不用改。
+    const c = (window._sitingCasesCache || []).find(x => x.name === name);
+    return (c && c.case_dir) ? c.case_dir : name;
 }
 
 // ── 结果渲染 ────────────────────────────────────────────────────────────────

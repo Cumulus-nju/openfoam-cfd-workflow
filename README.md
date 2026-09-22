@@ -28,13 +28,44 @@ python download_model.py
 ### 3. 启动服务
 
 ```bash
-cd D:\Phase2_CFD_ML
 python -m frontend.main
 ```
 
 浏览器自动打开 `http://127.0.0.1:8765`
 
-### 4. 登录
+> **无需修改任何代码**：项目路径按 `config.py` 自身位置自动推导，
+> clone 到任意目录 / 盘符 / 机器都能直接跑。
+
+### 4. 配置（可选，全部走环境变量）
+
+不设任何环境变量也能运行（案例与输出默认落在**项目根**下的 `cfd_cases/`、`model_outputs/`）。
+需要把数据放到别处、或启用可选功能时，再设对应变量：
+
+| 环境变量 | 作用 | 默认值 |
+|---|---|---|
+| `URBANWIND_CASES_DIR` | CFD 案例目录 | `<项目根>/cfd_cases` |
+| `URBANWIND_OUTPUT_DIR` | 后处理输出目录 | `<项目根>/model_outputs` |
+| `URBANWIND_GNN_DIR` | GNN 训练代码目录（含 `model.py`/`dataset.py`/`config.py`） | `<项目根>/gnn` |
+| `URBANWIND_GNN_CKPT` | GNN 权重 `.pt` 文件 | `<GNN_DIR>/checkpoints/stage1_best.pt` |
+| `GAODE_API_KEY` | 高德 Web 服务 Key（不设则高德数据源不可用） | 空 |
+| `URBANWIND_ADMIN_USER` / `URBANWIND_ADMIN_PASSWORD` | 首次启动创建的管理员 | `admin` / `urbanwind2026` |
+| `UWB_FOLDER_PICKER` | 设为 `0` 禁用服务端文件夹选择框（无桌面环境部署） | `1` |
+
+PowerShell 示例：
+
+```powershell
+$env:URBANWIND_CASES_DIR = "E:\UrbanWind\cfd_cases"
+$env:URBANWIND_GNN_DIR   = "E:\UrbanWind\gnn"
+$env:GAODE_API_KEY       = "你的高德Key"
+python -m frontend.main
+```
+
+> **可选依赖说明**：GNN 风场预测 / 单车选址 / 综合评估（GNN 情景）三项功能
+> 需要 `URBANWIND_GNN_DIR` 与权重文件。缺失时这些接口返回 503 并在
+> `/api/config` 里给出提示，其余功能（多源导入、LLM 优化、案例生成、
+> 本地上传评估）不受影响。
+
+### 5. 登录
 
 - 首次启动自动创建默认管理员：**admin / urbanwind2026**
 - 登录页支持**注册新账号**（注册后自动登录）
@@ -43,7 +74,7 @@ python -m frontend.main
 - 账号数据存于 `frontend/users.json`（已 gitignore，密码为 PBKDF2 哈希）
 - 修改密码：右上角菜单 →「修改密码」；管理员可在 `/api/auth/users` 查看注册用户
 
-### 5. 综合评估（📍 场景栏）
+### 6. 综合评估（📍 场景栏）
 
 多情景风环境分析 → 共享单车停放适宜性分级：
 
@@ -119,12 +150,16 @@ Phase2_CFD_ML/
 │   ├── static/              # Web 前端
 │   │   ├── index.html
 │   │   ├── css/app.css
-│   │   └── js/app.js
+│   │   └── js/{app,siting,eval}.js
 │   └── models/              # LLM 模型文件 (gitignored)
-├── cfd_cases/               # 生成的案例 (gitignored)
+├── cfd_cases/               # 生成的案例（默认位置，可改 URBANWIND_CASES_DIR）
+├── gnn/                     # GNN 训练代码 + 权重（可选，可改 URBANWIND_GNN_DIR）
 ├── requirements.txt
 └── download_model.py
 ```
+
+> 目录结构可按需调整：代码里没有任何绝对路径，
+> `cfd_cases/`、`model_outputs/`、`gnn/` 都可用环境变量指到别处（含数据盘）。
 
 ---
 

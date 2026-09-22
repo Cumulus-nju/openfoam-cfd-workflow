@@ -141,6 +141,9 @@ async function init() {
     // 地图懒初始化：首次进入「城市风场模拟」模块时才创建（平台首页默认显示）
     getUpdateWindBtn();  // ensure button element exists
 
+    // 运行环境配置（案例目录/输出目录/GNN 状态）——路径全部由后端下发
+    await loadRuntimeConfig();
+
     // Check model status
     checkHealth();
 
@@ -1099,7 +1102,8 @@ async function runLLMEnrich() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ── Output directory persistence ──────────────────────────────────
-const DEFAULT_OUTPUT = 'E:\\\\UrbanWind\\\\cfd_cases';
+// 默认值来自后端 /api/config（不硬编码盘符）；加载完成前为空串，避免误导。
+let DEFAULT_OUTPUT = '';
 
 function getOutputDir() {
     return localStorage.getItem('urbanwind_output_dir') || DEFAULT_OUTPUT;
@@ -1139,6 +1143,30 @@ async function pickOutputDir() {
         showToast('已选择: ' + data.path, 'success');
     } catch (e) {
         showToast('打开选择窗口失败: ' + e.message, 'error');
+    }
+}
+
+// ── Runtime config (从后端读取，避免前端硬编码路径) ────────────────
+let RUNTIME_CONFIG = null;
+
+async function loadRuntimeConfig() {
+    try {
+        const resp = await fetch('/api/config');
+        const data = await resp.json();
+        if (!data.success) return;
+        RUNTIME_CONFIG = data;
+        DEFAULT_OUTPUT = data.cases_dir || '';
+        const input = document.getElementById('gen-output-dir');
+        if (input && !input.value.trim()) {
+            input.value = getOutputDir();
+            updateWslPathPreview();
+        }
+        // GNN 不可用时给出明确提示（而不是等到点预测才失败）
+        if (data.gnn && data.gnn.available === false) {
+            console.warn('[UrbanWind] GNN 不可用：', data.gnn.hint);
+        }
+    } catch (e) {
+        console.warn('loadRuntimeConfig failed:', e);
     }
 }
 

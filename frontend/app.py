@@ -29,6 +29,7 @@ import uvicorn
 
 from .config import (
     SERVER_HOST, SERVER_PORT, STATIC_DIR, CFD_CASES_DIR, MODEL_FILE,
+    OUTPUT_DIR, GNN_CHECKPOINT, PROJECT_ROOT,
     SESSION_COOKIE_NAME, SESSION_TTL,
 )
 from .auth import auth
@@ -39,6 +40,29 @@ from .of_generator import assemble_case
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("urbanwind")
+
+# ── 路径工具 ─────────────────────────────────────────────────────────────────
+# 案例目录不再由前端拼死路径（那会把盘符写进前端 JS），改为后端按配置解析。
+# 前端只传「案例名」或 /api/list-cases 返回的 case_dir，两种都支持。
+
+def resolve_case_dir(raw: str | Path) -> Path:
+    """把案例名 / 相对路径 / 绝对路径统一解析为案例目录。
+
+    - 绝对路径：原样使用（允许案例放在 CFD_CASES_DIR 之外，如数据盘）
+    - 其它：相对 CFD_CASES_DIR 解析，并挡住 ../ 越界
+    """
+    s = str(raw or "").strip()
+    if not s:
+        raise HTTPException(400, "缺少案例目录（case_dir 或 case_name）")
+    p = Path(s.replace("\\", "/"))
+    if p.is_absolute() or (len(s) > 1 and s[1] == ":"):
+        return p
+    base = CFD_CASES_DIR.resolve()
+    target = (base / p).resolve()
+    if target != base and base not in target.parents:
+        raise HTTPException(400, f"非法案例路径: {s}")
+    return target
+
 
 # ── FastAPI app ──────────────────────────────────────────────────────────────
 
@@ -119,6 +143,33 @@ async def health():
         "model_loaded": engine.is_loaded,
         "model_path": str(MODEL_FILE),
         "sessions": len(_sessions),
+    }
+
+
+@app.get("/api/config")
+async def get_config():
+    """前端启动时读取的运行环境信息。
+
+    前端据此填充「案例目录 / 输出目录 / GNN 可用性」，
+    避免把任何盘符或绝对路径硬编码进 JS —— clone 到哪台机器都能用。
+    """
+    gnn_ready = GNN_CHECKPOINT.exists()
+    return {
+        "success": True,
+        "cases_dir": CFD_CASES_DIR.as_posix(),
+        "cases_dir_exists": CFD_CASES_DIR.exists(),
+        "output_dir": OUTPUT_DIR.as_posix(),
+        "gnn": {
+            "available": gnn_ready,
+            "checkpoint": GNN_CHECKPOINT.as_posix() if gnn_ready else None,
+            "hint": (
+                None if gnn_ready
+                else "未找到 GNN 权重，GNN 预测相关功能不可用；"
+                     "请设置 URBANWIND_GNN_DIR / URBANWIND_GNN_CKPT。"
+            ),
+        },
+        "project_root": PROJECT_ROOT.as_posix(),
+        "server": {"host": SERVER_HOST, "port": SERVER_PORT},
     }
 
 
@@ -627,16 +678,16 @@ async def generate_case(session_id: str = Query(...), request: Dict[str, Any] = 
             cell_size=cell_size,
         )
 
-        wsl_drive = str(case_dir)[0].lower()
-        wsl_path = f"/mnt/{wsl_drive}/" + str(case_dir)[2:].replace("\\", "/")
+        wsl_drive = str(case_dir.resolve())[0].lower()
+        wsl_case_path = f"/mnt/{wsl_drive}/" + str(case_dir.resolve())[2:].replace("\\", "/")
         return {
             "success": True,
             "case_dir": str(case_dir).replace("\\", "/"),
-            "wsl_path": wsl_path,
+            "wsl_path": wsl_case_path,
             "num_buildings": len(plan.buildings),
             "num_bikes": len(plan.bike_stations),
             "next_steps": [
-                f"wsl cd /mnt/d/Phase2_CFD_ML/cfd_cases/{case_name}",
+                f"wsl cd {wsl_case_path}",
                 "blockMesh",
                 "snappyHexMesh -overwrite",
                 "simpleFoam",
@@ -761,13 +812,13 @@ if (STATIC_DIR / "js").exists():
 async def predict_from_case(request: Dict[str, Any] = Body(...)):
     """
     从已生成的 CFD case 直接预测风场。
-    Body: {case_dir: "E:/UrbanWind/cfd_cases/my_case"}
+    Body: {case_dir: "my_case"}   # 相对 CFD_CASES_DIR，或绝对路径
     """
     import traceback as _tb
     try:
-        case_dir_raw = str(request.get("case_dir", ""))
+        case_dir_raw = str(request.get("case_dir", "") or request.get("case_name", ""))
         logger.info(f"predict-from-case: case_dir={case_dir_raw}")
-        case_dir = Path(case_dir_raw.replace("\\", "/"))
+        case_dir = resolve_case_dir(case_dir_raw)
         if not case_dir.exists():
             raise HTTPException(400, f"案例目录不存在: {case_dir}")
 
@@ -867,7 +918,7 @@ async def predict_from_case(request: Dict[str, Any] = Body(...)):
 @app.post("/api/save-trees")
 async def save_trees(request: Dict[str, Any] = Body(...)):
     """保存树列位置到 case/trees.json。"""
-    case_dir = Path(str(request.get("case_dir", "")).replace("\\", "/"))
+    case_dir = resolve_case_dir(request.get("case_dir") or request.get("case_name") or "")
     if not case_dir.exists():
         raise HTTPException(400, f"案例不存在: {case_dir}")
     trees_data = request.get("trees", [])
@@ -888,7 +939,7 @@ async def correct_from_case(request: Dict[str, Any] = Body(...)):
     从 case + 树列参数重新预测并修正风场。
     Body: {case_dir, wind_direction, inlet_speed, trees: [{cx, cy, length, angle_deg}]}
     """
-    case_dir = Path(str(request.get("case_dir", "")).replace("\\", "/"))
+    case_dir = resolve_case_dir(request.get("case_dir") or request.get("case_name") or "")
     if not case_dir.exists():
         raise HTTPException(400, f"案例不存在: {case_dir}")
 
@@ -1030,6 +1081,8 @@ async def list_cases():
             gj_path = d / "site_plan.geojson"
             info = {
                 "name": d.name,
+                # 前端直接回传此路径（或只回传 name），避免在前端硬编码盘符
+                "case_dir": d.resolve().as_posix(),
                 "has_plan": gj_path.exists(),
                 "n_buildings": 0,
                 "n_bikes": 0,
@@ -1085,7 +1138,7 @@ async def bike_siting(request: Dict[str, Any] = Body(...)):
     单车选址评估：GNN 预测（+树列修正）→ 候选单车点风暴露评分/风险分级/选址建议。
 
     Body: {
-        case_dir: "E:/UrbanWind/cfd_cases/my_case",
+        case_dir: "my_case",     # 或 case_name: "my_case"
         wind_direction: "N", inlet_speed: 5.0,
         v_crit: 11.7,            # 单车倾覆临界风速 (m/s)，来源 bike_wind_overturning_model.tex
         gust_factor: 0.67,       # 阵风修正 (7.8/11.7)
@@ -1106,7 +1159,9 @@ async def bike_siting(request: Dict[str, Any] = Body(...)):
     from matplotlib.patches import Polygon as _MplPoly
 
     try:
-        case_dir = Path(str(request.get("case_dir", "")).replace("\\", "/"))
+        case_dir = resolve_case_dir(
+            request.get("case_dir") or request.get("case_name") or ""
+        )
         if not case_dir.exists():
             raise HTTPException(400, f"案例不存在: {case_dir}")
 
@@ -1303,7 +1358,7 @@ async def bike_siting(request: Dict[str, Any] = Body(...)):
 
 # Lazy-loaded GNN predictor (loaded on first use to save RAM)
 _gnn_predictor = None
-_gnn_checkpoint = Path(r"E:\UrbanWind\gnn\checkpoints\stage1_best.pt")
+_gnn_checkpoint = GNN_CHECKPOINT
 
 
 def _get_predictor():
@@ -1345,8 +1400,9 @@ async def predict_wind(session_id: str = Query(...), request: Dict[str, Any] = B
 
     # Write debug info to file
     import datetime as _dt
-    _debug_log = Path("D:/Phase2_CFD_ML/predict_debug.log")
+    _debug_log = OUTPUT_DIR / "predict_debug.log"
     try:
+        _debug_log.parent.mkdir(parents=True, exist_ok=True)
         _debug_log.write_text(
             f"[{_dt.datetime.now()}] session={session_id} wind={wind_dir} speed={inlet_speed}\n"
             f"  plan type: {type(plan).__name__}, buildings: {len(plan.buildings)}\n"
@@ -1544,7 +1600,11 @@ async def eval_gnn(request: Dict[str, Any] = Body(...)):
 
     predictor = _get_predictor()
     if predictor is None:
-        raise HTTPException(503, "GNN 模型未就绪（需 E:\\UrbanWind\\gnn\\checkpoints\\stage1_best.pt）")
+        raise HTTPException(
+            503,
+            "GNN 模型未就绪：未找到权重文件 "
+            f"{GNN_CHECKPOINT}。请设置环境变量 URBANWIND_GNN_DIR / URBANWIND_GNN_CKPT 指向模型目录。",
+        )
 
     scenes_cfg = request.get("scenes") or []
     if not scenes_cfg:
@@ -1553,9 +1613,9 @@ async def eval_gnn(request: Dict[str, Any] = Body(...)):
     # 建筑来源：case_dir 或 session plan
     buildings_local = []
     geojson = None
-    case_dir_raw = str(request.get("case_dir", "") or "")
+    case_dir_raw = str(request.get("case_dir", "") or request.get("case_name", "") or "")
     if case_dir_raw:
-        case_dir = Path(case_dir_raw.replace("\\", "/"))
+        case_dir = resolve_case_dir(case_dir_raw)
         gpath = case_dir / "site_plan.geojson"
         if not gpath.exists():
             raise HTTPException(400, f"案例中没有 site_plan.geojson: {case_dir}")
@@ -1789,7 +1849,7 @@ def _pick_folder_worker(initial: str, q):
 async def pick_directory(request: Dict[str, Any] = Body(...)):
     """弹出服务端本机的文件夹选择窗口，返回所选路径。
 
-    Body: {"initial": "E:/UrbanWind/cfd_cases"}
+    Body: {"initial": "<任意起始目录，可留空>"}
     返回: {"path": "..." | null}   — null 表示用户取消或对话框不可用
     环境变量 UWB_FOLDER_PICKER=0 可禁用（无桌面会话的服务器部署）。
     """

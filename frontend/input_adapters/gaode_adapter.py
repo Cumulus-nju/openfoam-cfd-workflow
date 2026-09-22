@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.request import Request, urlopen, quote
@@ -18,7 +19,9 @@ from ..schema import (
     make_building_feature,
 )
 
-GAODE_KEY = "2ec57c587e4fe5b8652faecea9847c60"
+# 高德 Web 服务 Key 从环境变量读取，不要写进源码（本仓库是公开的）。
+# 申请：https://console.amap.com/  → 应用管理 → 添加 Key → 服务平台选「Web服务」
+GAODE_KEY = os.environ.get("GAODE_API_KEY", "").strip()
 GAODE_SEARCH_URL = "https://restapi.amap.com/v3/place/text"
 GAODE_AROUND_URL = "https://restapi.amap.com/v3/place/around"
 GAODE_PAGE_SIZE = 25  # max per page
@@ -75,6 +78,11 @@ def _classify_gaode_type(poi_type: str, tags: str = "") -> BuildingType:
 def _search_gaode(keywords: str, city: str = "", page: int = 1,
                   lat: float = 0, lon: float = 0, radius: int = 2000) -> Optional[Dict]:
     """Query Gaode place search API."""
+    if not GAODE_KEY:
+        raise RuntimeError(
+            "未配置高德 Key：请设置环境变量 GAODE_API_KEY 后重启服务。"
+            "（申请地址 https://console.amap.com/ ，服务平台选「Web服务」）"
+        )
     params = f"key={GAODE_KEY}&keywords={quote(keywords)}&offset={GAODE_PAGE_SIZE}&page={page}&extensions=all"
     if city:
         params += f"&city={quote(city)}"
@@ -93,6 +101,10 @@ def _search_gaode(keywords: str, city: str = "", page: int = 1,
 def _search_around(lat: float, lon: float, keywords: str, radius: int = 1500,
                    page: int = 1) -> Optional[Dict]:
     """Search POIs strictly within radius of a point."""
+    if not GAODE_KEY:
+        raise RuntimeError(
+            "未配置高德 Key：请设置环境变量 GAODE_API_KEY 后重启服务。"
+        )
     params = f"key={GAODE_KEY}&location={lon},{lat}&radius={radius}&keywords={quote(keywords)}&offset={GAODE_PAGE_SIZE}&page={page}&extensions=all"
     url = f"{GAODE_AROUND_URL}?{params}"
     try:
@@ -141,6 +153,8 @@ def _search_all_pages(keywords: str, city: str = "", lat: float = 0,
 
 def _geocode_gaode(address: str, city: str = "") -> Optional[Tuple[float, float]]:
     """Geocode an address to coordinates using Gaode."""
+    if not GAODE_KEY:
+        raise RuntimeError("未配置高德 Key：请设置环境变量 GAODE_API_KEY 后重启服务。")
     params = f"key={GAODE_KEY}&address={quote(address)}"
     if city:
         params += f"&city={quote(city)}"

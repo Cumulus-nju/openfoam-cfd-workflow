@@ -24,7 +24,7 @@ class CaseAssembler:
         plan = ...  # SitePlan from any adapter + LLM enrichment
         assembler = CaseAssembler(plan, "my_campus")
         case_dir = assembler.assemble()
-        # → D:/Phase2_CFD_ML/cfd_cases/my_campus/
+        # → <CFD_CASES_DIR>/my_campus/
     """
 
     def __init__(
