@@ -661,6 +661,14 @@ function toggleChat(forceCollapse) {
         chatCollapsed = !chatCollapsed;
     }
     panel.classList.toggle('collapsed', chatCollapsed);
+
+    // 收起/展开按钮始终保持可见且语义正确，避免收起后无处可点
+    const toggle = document.getElementById('chat-toggle');
+    if (toggle) {
+        const label = chatCollapsed ? '展开面板' : '收起面板';
+        toggle.title = label;
+        toggle.setAttribute('aria-label', (chatCollapsed ? '展开' : '收起') + ' AI 助手面板');
+    }
 }
 
 async function sendChat() {

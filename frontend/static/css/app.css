@@ -123,8 +123,31 @@ html, body {
     transition: transform var(--transition-normal), opacity var(--transition-normal);
 }
 
+/* æ”¶èµ·ï¼šé¢æ¿ç¼©æˆå³ä¸Šè§’ä¸€ä¸ªåªå«æŠ˜å æŒ‰é’®çš„å°æ¡ï¼ŒæŒ‰é’®å§‹ç»ˆåœç•™åœ¨å±å¹•å†…ã€‚
+   æ³¨æ„ï¼šä¸èƒ½ç”¨æ•´å— translateX å¹³ç§»â€”â€”é‚£æ ·æŒ‰é’®ä¼šè·Ÿç€ç§»å‡ºå±å¹•ï¼ˆ2026-09-22 å®æµ‹çš„ bugï¼‰ã€‚ */
 #chat-panel.collapsed {
-    transform: translateX(calc(var(--chat-width) - var(--chat-collapsed-width)));
+    width: var(--chat-collapsed-width);
+    bottom: auto;
+    height: 56px;
+    overflow: hidden;
+}
+
+/* æ”¶èµ·æ—¶æ­£æ–‡åŒºåŸŸéšè— */
+#chat-panel.collapsed .chat-messages,
+#chat-panel.collapsed .chat-input-area {
+    visibility: hidden;
+}
+
+/* æ”¶èµ·æ—¶æ ‡é¢˜åªç•™å›¾æ ‡ï¼Œçª„æ¡æ­£å¥½å®¹çº³ */
+#chat-panel.collapsed .chat-header {
+    padding: 14px 10px;
+    border-bottom: none;
+    justify-content: center;
+}
+
+#chat-panel.collapsed .chat-title-text,
+#chat-panel.collapsed .ai-badge {
+    display: none;
 }
 
 /* â”€â”€ Toolbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -456,6 +479,16 @@ html, body {
     align-items: center;
     justify-content: space-between;
     cursor: pointer;
+    position: relative;
+}
+
+/* æŠ˜å æŒ‰é’®ï¼šæ”¶èµ·æ—¶ç®­å¤´è½¬å‘å·¦ï¼Œæç¤ºã€Œå±•å¼€ã€ */
+.chat-toggle {
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#chat-panel.collapsed .chat-toggle {
+    transform: rotate(180deg);
 }
 
 .chat-header h3 {
@@ -1371,9 +1404,9 @@ html, body {
     .siting-panel { border-left: none; border-top: 1px solid var(--glass-border); }
 }
 
-/* ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
-   µÇÂ¼ÈÏÖ¤ ¡ª ÓÃ»§»Õ±ê / ÍË³ö°´Å¥
-   ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T */
+/* ç™»å½•è®¤è¯ â€” ç”¨æˆ·å¾½æ ‡ / é€€å‡ºæŒ‰é’® */
+
+
 .user-chip {
     display: inline-flex;
     align-items: center;
@@ -1411,9 +1444,9 @@ html, body {
     color: #fca5a5;
 }
 
-/* ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
-   ×ÛºÏÆÀ¹À°å¿é£¨¶àÇé¾°·ç»·¾³·ÖÎö£©
-   ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T */
+/* ç»¼åˆè¯„ä¼°æ¿å—ï¼ˆå¤šæƒ…æ™¯é£ç¯å¢ƒåˆ†æï¼‰ */
+
+
 .eval-count {
     font-size: 12px;
     color: var(--accent-cyan);
