@@ -508,9 +508,9 @@ function updateDroneVcritEff() {
     if (!inp || !eff) return;
     const v = parseFloat(inp.value);
     if (isNaN(v) || v <= 0) { eff.textContent = '请输入有效阈值'; return; }
-    // 无人机暂时**不再套用单车的 0.67 折减**（那个因子的来历待核实），
-    // 直接把 v_crit 当作判决阈值；谨慎起点仍按 0.85 分级。
-    eff.textContent = `判决阈值 ${v.toFixed(2)} m/s · 谨慎起点 ${(v * 0.85).toFixed(2)} m/s`;
+    // 与单车同一口径：标称抗风能力是阵风口径，模拟给的是平均风 → 按 G≈1.9 换算（×0.53）
+    const eff1 = v * 0.53;
+    eff.textContent = `判决阈值 ${eff1.toFixed(2)} m/s · 谨慎起点 ${(eff1 * 0.85).toFixed(2)} m/s`;
 }
 
 /** 米坐标 → WGS84；无地理参考时返回 null（此时只能看面板数据） */
