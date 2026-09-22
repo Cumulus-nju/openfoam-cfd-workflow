@@ -1158,7 +1158,8 @@ async def bike_siting(request: Dict[str, Any] = Body(...)):
         case_dir: "my_case",     # 或 case_name: "my_case"
         wind_direction: "N", inlet_speed: 5.0,
         v_crit: 11.7,            # 单车倾覆临界风速 (m/s)，来源 bike_wind_overturning_model.tex
-        gust_factor: 0.67,       # 阵风修正 (7.8/11.7)
+                                 # 【阵风口径】：使单车倾倒的是阵风，而模拟给的是平均风
+        gust_factor: 0.67,       # = 1/G（G≈1.49），把阵风口径阈值换算到平均风速口径
         high_factor: 0.8,        # 高风险阈值系数 (相对阵风阈值)
         medium_factor: 0.5,      # 中等风险阈值系数
         calm_speed: 1.5,         # 静风区判据 (m/s)
@@ -1196,7 +1197,7 @@ async def bike_siting(request: Dict[str, Any] = Body(...)):
         high_factor = float(request.get("high_factor", 0.8))
         medium_factor = float(request.get("medium_factor", 0.5))
         calm_speed = float(request.get("calm_speed", 1.5))
-        v_eff = v_crit * gust_factor  # 阵风修正后的倾覆阈值
+        v_eff = v_crit * gust_factor  # 换算到「平均风速」口径的倾覆阈值（阵风口径 ÷ G）
 
         buildings = _case_buildings_from_geojson(geojson)
         if not buildings:
