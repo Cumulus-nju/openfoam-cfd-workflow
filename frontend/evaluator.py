@@ -88,16 +88,23 @@ WD_VEC = {"N": (0.0, 1.0), "S": (0.0, -1.0), "E": (1.0, 0.0), "W": (-1.0, 0.0)}
 # ── CSV 解析 ──────────────────────────────────────────────────────────────────
 
 def _guess_columns(header: List[str]) -> Dict[str, int]:
-    """把表头映射到标准列名；支持中英文及常见别名。"""
+    """把表头映射到标准列名；支持中英文及常见别名。
+
+    注意 x/y 只认「米/投影坐标」语义的列名；lon/lng/lat 单独走 lat/lng，
+    这样「经纬度 + 米坐标」同时存在的文件也能正确区分（地图叠加要用后者）。
+    """
     aliases = {
-        "x": ["x", "px", "lon", "lng", "经度"],
-        "y": ["y", "py", "lat", "纬度"],
+        "x": ["x", "px", "x_m", "easting"],
+        "y": ["y", "py", "y_m", "northing"],
         "ux": ["ux", "u_x", "u", "vx", "u1"],
         "uy": ["uy", "u_y", "v", "vy", "u2"],
         "uz": ["uz", "u_z", "w", "vz", "u3"],
         "speed": ["speed", "spd", "vel", "magnitude", "velocity", "风速", "wind_speed"],
         "wd": ["wind_direction", "wind_dir", "direction", "dir", "风向"],
         "speed_inlet": ["inlet_speed", "wind_speed_inlet", "ref_speed", "入口风速", "风速_inlet"],
+        # 地理坐标（可选；有的话地图才能叠加、才能在上面画航线）
+        "lat": ["lat", "latitude", "纬度"],
+        "lng": ["lng", "lon", "long", "longitude", "经度"],
     }
     mapping: Dict[str, int] = {}
     lower = [str(h).strip().lower() for h in header]
@@ -106,6 +113,14 @@ def _guess_columns(header: List[str]) -> Dict[str, int]:
             if h in names:
                 mapping[std] = i
                 break
+    # 兼容旧写法：表头用 lon/lng/经度 当 x、lat/纬度 当 y 且没有独立 lat/lng 列时，
+    # 仍按米坐标处理（老文件不能失效）
+    if "x" not in mapping and "lng" in mapping:
+        mapping["x"] = mapping["lng"]
+        mapping.pop("lng", None)
+    if "y" not in mapping and "lat" in mapping:
+        mapping["y"] = mapping["lat"]
+        mapping.pop("lat", None)
     return mapping
 
 
@@ -150,9 +165,11 @@ def parse_scene_csv(text: str, filename: str = "", wind_dir: str = "",
         data_lines = lines
 
     xs, ys, uxs, uys, spds = [], [], [], [], []
+    lats, lngs = [], []
     auto_wd, auto_vi = wind_dir, inlet_speed
     speed_pos, ux_pos, uy_pos = mapping.get("speed"), mapping.get("ux"), mapping.get("uy")
     wd_pos, vi_pos = mapping.get("wd"), mapping.get("speed_inlet")
+    lat_pos, lng_pos = mapping.get("lat"), mapping.get("lng")
 
     for ln in data_lines:
         cells = [c.strip() for c in ln.split(delim)] if delim else ln.split()
@@ -169,6 +186,14 @@ def parse_scene_csv(text: str, filename: str = "", wind_dir: str = "",
                 auto_wd = str(cells[wd_pos]).strip().upper()[:1]
             if vi_pos is not None and vi_pos < len(cells) and auto_vi is None:
                 auto_vi = _parse_float(cells[vi_pos])
+            if lat_pos is not None and lat_pos < len(cells):
+                la = _parse_float(cells[lat_pos])
+                if la is not None:
+                    lats.append(la)
+            if lng_pos is not None and lng_pos < len(cells):
+                lo = _parse_float(cells[lng_pos])
+                if lo is not None:
+                    lngs.append(lo)
         else:
             # 无表头：≥4 列 → x,y,Ux,Uy(,speed)；3 列 → x,y,speed
             if len(cells) >= 4:
@@ -231,6 +256,13 @@ def parse_scene_csv(text: str, filename: str = "", wind_dir: str = "",
     return {
         "x": x, "y": y, "ux": ux, "uy": uy, "speed": speed,
         "bounds": [float(x.min()), float(y.min()), float(x.max()), float(y.max())],
+        # 有经纬度列时记录地理位置，前端才能把结果叠到地图上 / 在地图上画航线
+        "latlng_bounds": (
+            [float(min(lats)), float(min(lngs)), float(max(lats)), float(max(lngs))]
+            if (len(lats) >= 10 and len(lngs) >= 10 and
+                max(lats) != min(lats) and max(lngs) != min(lngs))
+            else None
+        ),
         "regular": False, "grid_x": None, "grid_y": None,
         "wind_direction": auto_wd.upper() if auto_wd else "N",
         "inlet_speed": auto_vi if auto_vi else 5.0,
@@ -434,6 +466,142 @@ def top_regions(grade: np.ndarray, label: int, k: int = 5,
             })
     results.sort(key=lambda r: -r["frac"])
     return results[:k]
+
+
+# ── 无人机航线评估 ────────────────────────────────────────────────────────────
+
+# 近地（行人高度 ~1.5-2m）→ 飞行高度的风速换算，用幂律剖面。
+# 城市地貌 α 取 0.22（GB 50009  B 类）；z0 取参考高度。
+ALPHA_URBAN = 0.22
+Z_REF = 10.0          # CFD/气象参考高度 (m)
+
+
+def _altitude_factor(altitude_m: float, z_ref: float = Z_REF,
+                     alpha: float = ALPHA_URBAN) -> float:
+    """高度修正系数：把参考高度的风速换算到目标飞行高度。
+
+    幂律剖面 v(z) = v_ref * (z / z_ref)^alpha。
+    飞行高度低于参考高度时系数 <1（贴地风更小），高于则 >1。
+    """
+    if altitude_m <= 0:
+        return 1.0
+    return float((altitude_m / z_ref) ** alpha)
+
+
+def sample_route(wind: np.ndarray, grid_x: np.ndarray, grid_y: np.ndarray,
+                 waypoints: List[Tuple[float, float]], n_samples: int = 200,
+                 altitude: float = 60.0, alpha: float = ALPHA_URBAN,
+                 z_ref: float = Z_REF) -> List[Dict[str, Any]]:
+    """沿航线（waypoints 折线，米坐标）等距采样加权风速场。
+
+    返回每个采样点的 {x, y, s(沿程距离), v_raw, v_alt}。
+    v_raw = 该点风场值；v_alt = 按幂律剖面换算到飞行高度后的值。
+    """
+    if len(waypoints) < 2:
+        raise ValueError("航线至少需要 2 个航点")
+
+    pts = np.asarray(waypoints, dtype=np.float64)
+    seg = np.diff(pts, axis=0)
+    seg_len = np.hypot(seg[:, 0], seg[:, 1])
+    total = float(seg_len.sum())
+    if total <= 0:
+        raise ValueError("航线长度为零")
+    if n_samples < 2:
+        n_samples = 2
+
+    # 沿折线等距取 n_samples 个点
+    targets = np.linspace(0.0, total, n_samples)
+    cum = np.concatenate([[0.0], np.cumsum(seg_len)])
+    out = []
+    k = 0
+    for s in targets:
+        while k < len(seg_len) - 1 and s > cum[k + 1]:
+            k += 1
+        t = 0.0 if seg_len[k] == 0 else (s - cum[k]) / seg_len[k]
+        t = min(max(t, 0.0), 1.0)
+        px = pts[k][0] + t * seg[k][0]
+        py = pts[k][1] + t * seg[k][1]
+        v = _bilinear(wind, grid_x, grid_y, px, py)
+        out.append({
+            "x": float(px), "y": float(py), "s": float(s),
+            "v_raw": None if v is None or np.isnan(v) else float(v),
+            "v_alt": None if v is None or np.isnan(v) else float(v) * _altitude_factor(altitude, z_ref, alpha),
+        })
+    return out
+
+
+def _bilinear(grid: np.ndarray, grid_x: np.ndarray, grid_y: np.ndarray,
+              px: float, py: float) -> Optional[float]:
+    """在参考网格上双线性插值（grid 行序与 grid_y 一致，第 0 行=北）。
+
+    越界或任一角点为 NaN 时返回 None。
+    """
+    gx = np.asarray(grid_x, dtype=np.float64)
+    gy = np.asarray(grid_y, dtype=np.float64)      # 递减
+    H, W = grid.shape
+    if not (gx[0] <= px <= gx[-1]) or not (gy[-1] <= py <= gy[0]):
+        return None
+    xi = int(np.searchsorted(gx, px, side="right") - 1)
+    xi = min(max(xi, 0), W - 2) if W > 1 else 0
+    # gy 递减 → 反转用升序查找
+    gy_asc = gy[::-1]
+    yi_asc = int(np.searchsorted(gy_asc, py, side="right") - 1)
+    yi_asc = min(max(yi_asc, 0), len(gy_asc) - 2) if len(gy_asc) > 1 else 0
+    yi = H - 1 - yi_asc          # 转回 grid 的行索引（第 0 行=北）
+
+    x1 = min(xi + 1, W - 1)
+    y1 = max(yi - 1, 0)          # 纬度增大 → 行号减小
+    dx = 0.0 if gx[x1] == gx[xi] else (px - gx[xi]) / (gx[x1] - gx[xi])
+    dy = 0.0 if gy[y1] == gy[yi] else (py - gy[yi]) / (gy[y1] - gy[yi])
+
+    vals = [grid[yi][xi], grid[yi][x1], grid[y1][xi], grid[y1][x1]]
+    if any(v is None or np.isnan(v) for v in vals):
+        return None
+    v00, v01, v10, v11 = vals
+    top = v00 * (1 - dx) + v01 * dx
+    bot = v10 * (1 - dx) + v11 * dx
+    return float(top * (1 - dy) + bot * dy)
+
+
+def grade_route(samples: List[Dict[str, Any]], mean_th: float, strong_th: float,
+                calm_th: float = 2.0) -> Dict[str, Any]:
+    """按采样风速给航段分级（0 风力不足 / 1 适飞 / 2 谨慎 / 3 禁飞风险）。
+
+    分级依据（与单车同构）：
+      v >= mean_th           → 3 禁飞风险
+      v >= strong_th         → 2 谨慎飞行
+      v <  calm_th           → 0 风力不足/悬停受限
+      否则                    → 1 适飞
+    """
+    segs = []
+    counts = {0: 0, 1: 0, 2: 0, 3: 0}
+    for smp in samples:
+        v = smp["v_alt"]
+        if v is None:
+            g = None
+        elif v >= mean_th:
+            g = 3
+        elif v >= strong_th:
+            g = 2
+        elif v < calm_th:
+            g = 0
+        else:
+            g = 1
+        if g is not None:
+            counts[g] += 1
+        segs.append({**smp, "grade": g})
+    n = sum(counts.values()) or 1
+    valid = [s["v_alt"] for s in segs if s["v_alt"] is not None]
+    return {
+        "segments": segs,
+        "grade_counts": {str(k): v for k, v in counts.items()},
+        "grade_frac": {str(k): v / n for k, v in counts.items()},
+        "v_min": float(min(valid)) if valid else None,
+        "v_max": float(max(valid)) if valid else None,
+        "v_mean": float(sum(valid) / len(valid)) if valid else None,
+        "n_valid": len(valid),
+        "n_total": len(segs),
+    }
 
 
 # ── 报告图 ────────────────────────────────────────────────────────────────────

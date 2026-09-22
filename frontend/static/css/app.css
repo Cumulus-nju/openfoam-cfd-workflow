@@ -1874,6 +1874,35 @@ html, body {
     border: 1px solid rgba(245, 158, 11, 0.25);
 }
 
+/* 航线航点列表：x / y 输入框一行排开，别换行 */
+#drone-route-pts .rec-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+}
+
+#drone-route-pts .rec-item > span:not(.rec-rank) {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+#drone-route-pts input.rt-pt {
+    width: 62px;
+    min-width: 0;
+    padding: 3px 6px;
+    font-size: 12px;
+}
+
+#drone-route-pts .rec-rank {
+    flex: none;
+    min-width: 18px;
+}
+
 @media (max-width: 1100px) {
     #eval-module, .drone-module { height: 100%; }
 }

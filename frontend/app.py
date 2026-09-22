@@ -1734,46 +1734,21 @@ async def eval_run(request: Dict[str, Any] = Body(...)):
     }
     """
     import traceback as _tb
-    from .evaluator import (
-        aggregate, build_reference_grid, render_report, resample_scene,
-        resolve_context, top_regions,
-    )
+    from .evaluator import render_report, top_regions
 
-    scene_ids = request.get("scene_ids") or []
-    if not scene_ids:
-        raise HTTPException(400, "请先添加情景")
-    if len(scene_ids) > 40:
-        raise HTTPException(400, "情景数量过多（≤40）")
-
-    scenes = []
-    for sid in scene_ids:
-        sc = _eval_scenes.get(sid)
-        if sc is None:
-            raise HTTPException(400, f"情景 {sid} 不在缓存（服务可能已重启，请重新上传/运行）")
-        scenes.append(sc)
-
-    ctx = resolve_context(request.get("context", "bike"))
-    weights = request.get("weights") or [1.0] * len(scenes)
     try:
-        grid_x, grid_y = build_reference_grid(scenes)
-        resampled = []
-        for sc in scenes:
-            grid = resample_scene(sc, grid_x, grid_y)
-            resampled.append({"speed_grid": grid,
-                              "wind_direction": sc["wind_direction"],
-                              "inlet_speed": sc["inlet_speed"]})
-        res = aggregate(
-            resampled,
-            [float(w) for w in weights],
-            v_crit=float(request.get("v_crit", ctx["v_crit"])),
-            gust_factor=float(request.get("gust_factor", ctx["gust_factor"])),
-            high_factor=float(request.get("high_factor", ctx["high_factor"])),
-            medium_factor=float(request.get("medium_factor", ctx["medium_factor"])),
-            calm_speed=float(request.get("calm_speed", ctx["calm_speed"])),
-        )
+        field = _compute_weighted_field(request, default_ctx="bike")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"eval-run CRASH: {e}\n{_tb.format_exc()}")
         raise HTTPException(500, f"评估计算失败: {e}")
+
+    res = field["res"]
+    grid_x, grid_y = field["grid_x"], field["grid_y"]
+    resampled = field["resampled"]
+    scenes = field["scenes"]
+    ctx = field["ctx"]
 
     def _ser(a, nd: int = 2):
         def f(v):
@@ -1851,6 +1826,204 @@ async def eval_clear():
     """清空评估情景缓存。"""
     _eval_scenes.clear()
     return {"success": True, "message": "已清空情景缓存"}
+
+
+@app.post("/api/eval/bounds")
+async def eval_bounds(request: Dict[str, Any] = Body(default={})):
+    """取情景的地理/网格范围，供无人机航线绘制做坐标换算（无需整场评估）。"""
+    scene_ids = (request or {}).get("scene_ids") or list(_eval_scenes.keys())
+    for sid in scene_ids:
+        sc = _eval_scenes.get(sid)
+        if not sc:
+            continue
+        b = sc.get("bounds")
+        lb = sc.get("latlng_bounds")
+        if b:
+            return {
+                "success": True,
+                "grid_bounds": [float(v) for v in b],
+                "grid_bounds_latlng": ([float(v) for v in lb] if lb else None),
+            }
+    return {"success": False, "message": "暂无可用情景"}
+
+
+def _compute_weighted_field(body: Dict[str, Any], default_ctx: str = "bike") -> Dict[str, Any]:
+    """多情景 → 参考网格 → 加权聚合。供「区域评估」与「航线评估」共用。
+
+    返回 {res, grid_x, grid_y, resampled, scenes, ctx}；HTTPException 由调用方透出。
+    """
+    from .evaluator import (
+        aggregate, build_reference_grid, resample_scene, resolve_context,
+    )
+
+    scene_ids = body.get("scene_ids") or []
+    if not scene_ids:
+        raise HTTPException(400, "请先添加情景")
+    if len(scene_ids) > 40:
+        raise HTTPException(400, "情景数量过多（≤40）")
+
+    scenes = []
+    for sid in scene_ids:
+        sc = _eval_scenes.get(sid)
+        if sc is None:
+            raise HTTPException(400, f"情景 {sid} 不在缓存（服务可能已重启，请重新上传/运行）")
+        scenes.append(sc)
+
+    ctx = resolve_context(body.get("context", default_ctx))
+    weights = body.get("weights") or [1.0] * len(scenes)
+    grid_x, grid_y = build_reference_grid(scenes)
+    resampled = []
+    for sc in scenes:
+        grid = resample_scene(sc, grid_x, grid_y)
+        resampled.append({"speed_grid": grid,
+                          "wind_direction": sc["wind_direction"],
+                          "inlet_speed": sc["inlet_speed"]})
+    res = aggregate(
+        resampled,
+        [float(w) for w in weights],
+        v_crit=float(body.get("v_crit", ctx["v_crit"])),
+        gust_factor=float(body.get("gust_factor", ctx["gust_factor"])),
+        high_factor=float(body.get("high_factor", ctx["high_factor"])),
+        medium_factor=float(body.get("medium_factor", ctx["medium_factor"])),
+        calm_speed=float(body.get("calm_speed", ctx["calm_speed"])),
+    )
+    return {"res": res, "grid_x": grid_x, "grid_y": grid_y,
+            "resampled": resampled, "scenes": scenes, "ctx": ctx}
+
+
+@app.post("/api/eval/route")
+async def eval_route(request: Dict[str, Any] = Body(...)):
+    """无人机航线适飞性评估：沿航线抽取加权风速场 → 按航段分级 → 风险统计。
+
+    与区域评估共用同一套多情景加权框架，区别在于取的是「沿航线的一条线」而不是整个面。
+
+    Body: {
+        scene_ids: [...],
+        weights?: [...],
+        context?: "drone" | "bike",       默认 drone
+        waypoints: [[x, y], [x, y], ...], 航线折线（米坐标，与上传数据同一坐标系）
+        altitude?: 60.0,                  飞行高度 (m)，用于幂律剖面换算
+        alpha?: 0.22,                     地貌粗糙度指数
+        n_samples?: 200,
+        z_ref?: 10.0
+    }
+    """
+    import traceback as _tb
+    from .evaluator import grade_route, sample_route
+
+    waypoints = request.get("waypoints") or []
+    try:
+        waypoints = [[float(p[0]), float(p[1])] for p in waypoints]
+    except Exception:
+        raise HTTPException(400, "waypoints 格式应为 [[x,y], ...]")
+    if len(waypoints) < 2:
+        raise HTTPException(400, "航线至少需要 2 个航点")
+
+    altitude = float(request.get("altitude", 60.0))
+    if not (0 < altitude <= 1000):
+        raise HTTPException(400, "飞行高度应在 0~1000 m")
+
+    field = _compute_weighted_field(request, default_ctx="drone")
+    ctx = field["ctx"]
+    mean = field["res"]["mean"]
+    grid_x, grid_y = field["grid_x"], field["grid_y"]
+
+    v_eff = ctx["v_crit"] * ctx["gust_factor"]      # 阵风修正后的抗风阈值
+    strong_th = v_eff * ctx["high_factor"]          # 谨慎飞行起点
+    calm_th = ctx["calm_speed"]
+
+    try:
+        samples = sample_route(
+            mean, grid_x, grid_y, waypoints,
+            n_samples=int(request.get("n_samples", 200)),
+            altitude=altitude,
+            alpha=float(request.get("alpha", 0.22)),
+            z_ref=float(request.get("z_ref", 10.0)),
+        )
+        graded = grade_route(samples, mean_th=v_eff, strong_th=strong_th, calm_th=calm_th)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error(f"eval-route CRASH: {e}\n{_tb.format_exc()}")
+        raise HTTPException(500, f"航线评估失败: {e}")
+
+    # 风险路段归并（连续的 grade>=2 段合并成区间）
+    risk_runs = []
+    cur = None
+    for seg in graded["segments"]:
+        g = seg["grade"]
+        if g is not None and g >= 2:
+            if cur is None:
+                cur = {"s0": seg["s"], "s1": seg["s"], "max_grade": g,
+                       "x0": seg["x"], "y0": seg["y"], "x1": seg["x"], "y1": seg["y"]}
+            else:
+                cur["s1"] = seg["s"]
+                cur["x1"], cur["y1"] = seg["x"], seg["y"]
+                cur["max_grade"] = max(cur["max_grade"], g)
+        elif cur is not None:
+            risk_runs.append(cur)
+            cur = None
+    if cur is not None:
+        risk_runs.append(cur)
+
+    # 建议飞行高度：沿程最大风速需压到「谨慎飞行」阈值以下。
+    # 幂律剖面 v(z) ∝ z^α 是单调增的 → 降高才能减小风速，所以建议值只会 ≤ 当前高度。
+    # 得到的高度若低于 5 m（低于此无人机已无安全作业余量），视为该航线不可飞。
+    max_v_raw = max([s["v_raw"] for s in graded["segments"] if s["v_raw"] is not None] or [0.0])
+    suggest_alt = None
+    suggest_note = None
+    alpha_v = float(request.get("alpha", 0.22))
+    z_ref_v = float(request.get("z_ref", 10.0))
+    if max_v_raw <= 0 or strong_th <= 0:
+        suggest_note = "风速数据不足，无法给出高度建议"
+    elif max_v_raw <= strong_th:
+        suggest_note = f"当前 {altitude:.0f} m 高度沿程最大风速已低于谨慎阈值，无需调整"
+    else:
+        need = z_ref_v * (strong_th / max_v_raw) ** (1.0 / alpha_v)
+        if need < 5.0:
+            suggest_note = (f"需降到 {need:.1f} m 才低于谨慎阈值，"
+                            f"低于 5 m 无安全作业余量 → 该航线在当前风况下不可飞")
+        else:
+            suggest_alt = round(float(need), 1)
+            suggest_note = (f"建议飞行高度降至 {suggest_alt:.0f} m 以下"
+                            f"（当前 {altitude:.0f} m 沿程最大 {max_v_raw:.1f} m/s）")
+
+    return {
+        "success": True,
+        "context": {
+            "key": ctx["key"], "label": ctx["label"], "ground": ctx["ground"],
+            "grade_labels": ctx["grade_labels"], "title": ctx["title"],
+        },
+        "route": {
+            "waypoints": waypoints,
+            "altitude": altitude,
+            "total_length": graded["segments"][-1]["s"] if graded["segments"] else 0.0,
+            "n_samples": graded["n_total"],
+            "n_valid": graded["n_valid"],
+        },
+        "thresholds": {
+            "v_eff": round(v_eff, 2),
+            "strong_th": round(strong_th, 2),
+            "calm_th": round(calm_th, 2),
+        },
+        "segments": [
+            {"x": round(s["x"], 2), "y": round(s["y"], 2), "s": round(s["s"], 2),
+             "v_raw": None if s["v_raw"] is None else round(s["v_raw"], 2),
+             "v_alt": None if s["v_alt"] is None else round(s["v_alt"], 2),
+             "grade": s["grade"]}
+            for s in graded["segments"]
+        ],
+        "stats": {
+            "v_min": None if graded["v_min"] is None else round(graded["v_min"], 2),
+            "v_max": None if graded["v_max"] is None else round(graded["v_max"], 2),
+            "v_mean": None if graded["v_mean"] is None else round(graded["v_mean"], 2),
+            "grade_frac": {k: round(v, 4) for k, v in graded["grade_frac"].items()},
+            "grade_counts": graded["grade_counts"],
+        },
+        "risk_runs": risk_runs,
+        "suggest_altitude": suggest_alt,
+        "suggest_note": suggest_note,
+    }
 
 
 # ── 文件夹选择（服务端本地对话框） ─────────────────────────────────────────────

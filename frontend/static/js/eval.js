@@ -136,6 +136,14 @@ function ensureDroneMap() {
     L.control.zoom({ position: 'topleft' }).addTo(droneMap);
     L.control.scale({ position: 'bottomleft', metric: true, imperial: false }).addTo(droneMap);
 
+    // 航线绘制：绘制态下点击落点、双击结束
+    droneMap.on('click', function (e) {
+        if (droneRouteDrawing) addRoutePoint(e.latlng);
+    });
+    droneMap.on('dblclick', function () {
+        if (droneRouteDrawing) finishRouteDraw();
+    });
+
     setTimeout(() => droneMap.invalidateSize(), 100);
 }
 
@@ -155,6 +163,26 @@ function switchEvalSource(name) {
 
 // ── 情景：本地上传 ──────────────────────────────────────────────────────────
 
+/** 取情景的地理/网格范围（无人机航线绘制需要），无需先跑整场评估 */
+async function fetchEvalBounds() {
+    if (droneGridBounds && droneGridBoundsLatLng) return true;
+    try {
+        const resp = await fetch('/api/eval/bounds', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scene_ids: evalScenes.map(s => s.scene_id) }),
+        });
+        const d = await resp.json();
+        if (d && d.success && d.grid_bounds) {
+            droneGridBounds = d.grid_bounds;
+            droneGridBoundsLatLng = d.grid_bounds_latlng || null;
+            if (assessCtx === 'drone' && typeof fitDroneMapToData === 'function') fitDroneMapToData();
+            return true;
+        }
+    } catch (e) { /* 忽略，绘制时会再兜底 */ }
+    return false;
+}
+
 async function uploadEvalFiles(input) {
     const files = Array.from(input.files || []);
     if (!files.length) return;
@@ -168,6 +196,7 @@ async function uploadEvalFiles(input) {
         if (!data.scenes || !data.scenes.length) { showToast('未解析出有效情景', 'error'); return; }
         addEvalScenes(data.scenes);
         showToast(`成功解析 ${data.scenes.length} 个情景`, 'success');
+        fetchEvalBounds();          // 后台取范围，便于无人机在地图上画航线
     } catch (e) {
         showToast('上传失败: ' + e.message, 'error');
     } finally {
@@ -336,6 +365,8 @@ async function clearEvalScenes() {
         if (o && m) m.removeLayer(o);
     });
     evalOverlay = null; droneOverlay = null;
+    droneGridBounds = null; droneGridBoundsLatLng = null;
+    if (typeof clearDroneRoute === 'function') clearDroneRoute();
     ['eval-map-note', 'drone-map-note'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
@@ -432,6 +463,333 @@ function refreshAssessPanels() {
     }
 }
 
+// ── 无人机航线规划 ───────────────────────────────────────────────────────────
+
+let droneRoute = [];           // 航点（米坐标 [[x,y],...]）—— 与上传数据同一坐标系
+let droneRouteDrawing = false;
+let droneRoutePoints = [];     // 地图点击的 latlng
+let routeLineLayer = null;     // 航线折线
+let routeMarkerLayer = null;   // 航点标记
+let routeSegLayer = null;      // 分级着色航段
+let droneRouteResult = null;
+let droneGridBounds = null;    // 上一次区域评估的网格范围（米坐标）
+let droneGridBoundsLatLng = null;
+
+/** 米坐标 → WGS84；无地理参考时返回 null（此时只能看面板数据） */
+function droneXYToLatLng(x, y) {
+    const b = droneGridBounds, lb = droneGridBoundsLatLng;
+    if (!b || !lb) return null;
+    const [x0, y0, x1, y1] = b;
+    const [lat0, lng0, lat1, lng1] = lb;
+    if (x1 === x0 || y1 === y0) return null;
+    const tx = (x - x0) / (x1 - x0);
+    const ty = (y - y0) / (y1 - y0);
+    return L.latLng(lat0 + ty * (lat1 - lat0), lng0 + tx * (lng1 - lng0));
+}
+
+function droneLatLngToXY(latlng) {
+    const b = droneGridBounds, lb = droneGridBoundsLatLng;
+    if (!b || !lb) return null;
+    const [x0, y0, x1, y1] = b;
+    const [lat0, lng0, lat1, lng1] = lb;
+    if (lat1 === lat0 || lng1 === lng0) return null;
+    const tx = (latlng.lng - lng0) / (lng1 - lng0);
+    const ty = (latlng.lat - lat0) / (lat1 - lat0);
+    return [x0 + tx * (x1 - x0), y0 + ty * (y1 - y0)];
+}
+
+/** 把无人机地图缩放到数据范围，否则用户很难点准几百米的场地 */
+function fitDroneMapToData() {
+    if (!droneMap || !droneGridBoundsLatLng) return;
+    const [lat0, lng0, lat1, lng1] = droneGridBoundsLatLng;
+    // 限制缩放级别：场地只有几百米，放太大瓦片会缺图（Map data not yet available）
+    droneMap.fitBounds(L.latLngBounds([[lat0, lng0], [lat1, lng1]]).pad(0.25),
+                       { maxZoom: 17 });
+}
+
+/** 航点列表（面板内直接编辑米坐标，比在地图上点更精确） */
+function renderRoutePtsList() {
+    const box = document.getElementById('drone-route-pts');
+    if (!box) return;
+    if (!droneRoute.length) {
+        box.innerHTML = '<div class="eval-hint-inline">尚无航点</div>';
+        return;
+    }
+    box.innerHTML = droneRoute.map((p, i) => `
+        <div class="rec-item">
+            <span class="rec-rank">${i + 1}</span>
+            <span>x <input type="number" class="rt-pt" data-i="${i}" data-k="0" value="${Math.round(p[0])}" step="5"> ,
+                  y <input type="number" class="rt-pt" data-i="${i}" data-k="1" value="${Math.round(p[1])}" step="5"></span>
+            <button class="btn btn-sm btn-icon btn-danger-icon" onclick="removeRoutePt(${i})" title="删除航点">✕</button>
+        </div>`).join('');
+    box.querySelectorAll('.rt-pt').forEach(inp => {
+        inp.addEventListener('change', () => {
+            const i = parseInt(inp.dataset.i, 10), k = parseInt(inp.dataset.k, 10);
+            const v = parseFloat(inp.value);
+            if (!isNaN(v) && droneRoute[i]) {
+                droneRoute[i][k] = v;
+                redrawRouteFromXY();
+            }
+        });
+    });
+}
+
+function addRoutePtManual() {
+    const b = droneGridBounds || [0, 0, 200, 200];
+    // 默认在场地中心和右上角之间取点，方便用户改
+    const n = droneRoute.length;
+    const x = b[0] + (b[2] - b[0]) * (0.2 + 0.3 * n);
+    const y = b[1] + (b[3] - b[1]) * 0.5;
+    droneRoute.push([Math.round(x), Math.round(y)]);
+    syncRouteMarkersFromXY();
+    renderRoutePtsList();
+}
+
+function removeRoutePt(i) {
+    droneRoute.splice(i, 1);
+    syncRouteMarkersFromXY();
+    renderRoutePtsList();
+}
+
+/** 由米坐标航点同步出地图标记与折线 */
+function syncRouteMarkersFromXY() {
+    if (!droneMap) return;
+    droneRoutePoints = droneRoute.map(p => droneXYToLatLng(p[0], p[1])).filter(Boolean);
+    renderRouteLine();
+    const runBtn = document.getElementById('btn-drone-route-run');
+    if (runBtn) runBtn.disabled = droneRoute.length < 2;
+}
+
+function redrawRouteFromXY() {
+    syncRouteMarkersFromXY();
+    renderRoutePtsList();
+}
+
+/** 取得米坐标↔经纬度的参考范围：优先用已有评估结果，否则用经纬度范围反推 */
+function ensureDroneGridBounds() {
+    if (droneGridBounds && droneGridBoundsLatLng) return true;
+    if (typeof evalResult !== 'undefined' && evalResult &&
+        evalResult.grid_bounds && evalResult.grid_bounds_latlng) {
+        droneGridBounds = evalResult.grid_bounds;
+        droneGridBoundsLatLng = evalResult.grid_bounds_latlng;
+        return true;
+    }
+    // 退回：用地图当前视野当经纬度参考，米坐标按等距近似换算（仅画图用，评估仍用真实米坐标）
+    const b = droneMap && droneMap.getBounds();
+    if (!b) return false;
+    const sw = b.getSouthWest(), ne = b.getNorthEast();
+    const mLat = 111320.0, mLng = 111320.0 * Math.cos((sw.lat + ne.lat) / 2 * Math.PI / 180);
+    const w = Math.abs(ne.lng - sw.lng) * mLng, h = Math.abs(ne.lat - sw.lat) * mLat;
+    droneGridBounds = [0, 0, w, h];
+    droneGridBoundsLatLng = [sw.lat, sw.lng, ne.lat, ne.lng];
+    return true;
+}
+
+function toggleRouteDraw() {
+    if (!droneMap) return;
+    if (droneRouteDrawing) return finishRouteDraw();
+    if (!ensureDroneGridBounds()) { showToast('地图尚未就绪', 'error'); return; }
+
+    droneRouteDrawing = true;
+    droneRoutePoints = [];
+    droneRoute = [];
+    clearRouteLayers();
+    droneMap.getContainer().style.cursor = 'crosshair';
+    const btn = document.getElementById('btn-drone-draw');
+    if (btn) { btn.textContent = '✅ 结束绘制'; btn.classList.add('active'); }
+    const runBtn = document.getElementById('btn-drone-route-run');
+    if (runBtn) runBtn.disabled = true;
+    droneMap.doubleClickZoom.disable();
+    showToast('依次点击地图落点，完成后点「结束绘制」或双击', 'info');
+}
+
+function addRoutePoint(latlng) {
+    const xy = droneLatLngToXY(latlng);
+    if (!xy) { showToast('无法换算坐标（缺少地理参考）', 'error'); return; }
+    const b = droneGridBounds;
+    if (b && (xy[0] < b[0] || xy[0] > b[2] || xy[1] < b[1] || xy[1] > b[3])) {
+        showToast(`航点 (${xy[0].toFixed(0)}, ${xy[1].toFixed(0)}) 在数据范围外，该段无法评估`, 'error');
+    }
+    droneRoute.push([xy[0], xy[1]]);
+    syncRouteMarkersFromXY();
+    renderRoutePtsList();
+    const hint = document.getElementById('drone-route-hint');
+    if (hint) hint.textContent = `已落 ${droneRoute.length} 个航点（可在下方直接改米坐标）。完成后点「结束绘制」或双击。`;
+}
+
+function finishRouteDraw() {
+    droneRouteDrawing = false;
+    if (droneMap) {
+        droneMap.getContainer().style.cursor = '';
+        droneMap.doubleClickZoom.enable();
+    }
+    const btn = document.getElementById('btn-drone-draw');
+    if (btn) { btn.textContent = '✏️ 在地图上画航线'; btn.classList.remove('active'); }
+    const runBtn = document.getElementById('btn-drone-route-run');
+    const ok = droneRoute.length >= 2;
+    if (runBtn) runBtn.disabled = !ok;
+    const hint = document.getElementById('drone-route-hint');
+    if (hint) {
+        hint.textContent = ok
+            ? `航线已就绪：${droneRoute.length} 个航点。点「评估航线」开始。`
+            : '航线至少需要 2 个航点，请重新绘制。';
+    }
+    if (ok) showToast(`航线已就绪（${droneRoute.length} 航点）`, 'success');
+}
+
+function renderRouteLine() {
+    if (!droneMap) return;
+    if (routeLineLayer) { droneMap.removeLayer(routeLineLayer); routeLineLayer = null; }
+    if (routeMarkerLayer) { droneMap.removeLayer(routeMarkerLayer); routeMarkerLayer = null; }
+    const pts = droneRoutePoints;
+    if (!pts.length) return;
+    routeMarkerLayer = L.layerGroup();
+    pts.forEach((ll, i) => {
+        L.circleMarker(ll, {
+            radius: 5, color: '#06b6d4', weight: 2,
+            fillColor: '#0b0f17', fillOpacity: 1,
+        }).bindTooltip('航点 ' + (i + 1)).addTo(routeMarkerLayer);
+    });
+    routeMarkerLayer.addTo(droneMap);
+    if (pts.length >= 2) {
+        routeLineLayer = L.polyline(pts, {
+            color: '#06b6d4', weight: 3, dashArray: '6 6', opacity: 0.9,
+        }).addTo(droneMap);
+    }
+}
+
+/** 按分级给航段着色（3 禁飞红 / 2 谨慎橙 / 1 适飞绿 / 0 悬停受限蓝） */
+function renderRouteSegments() {
+    if (!droneMap || !droneRouteResult) return;
+    if (routeSegLayer) { droneMap.removeLayer(routeSegLayer); routeSegLayer = null; }
+    if (routeLineLayer) { droneMap.removeLayer(routeLineLayer); routeLineLayer = null; }
+    if (routeMarkerLayer) { droneMap.removeLayer(routeMarkerLayer); routeMarkerLayer = null; }
+
+    const segs = droneRouteResult.segments || [];
+    routeSegLayer = L.layerGroup();
+    for (let i = 0; i < segs.length - 1; i++) {
+        const a = segs[i], b = segs[i + 1];
+        const la = droneXYToLatLng(a.x, a.y), lb = droneXYToLatLng(b.x, b.y);
+        if (!la || !lb) continue;
+        const col = (a.grade === null || a.grade === undefined)
+            ? '#94a3b8' : (evalGradeColors[a.grade] || '#94a3b8');
+        L.polyline([la, lb], { color: col, weight: 6, opacity: 0.95 }).addTo(routeSegLayer);
+    }
+    routeSegLayer.addTo(droneMap);
+
+    // 航点标记
+    routeMarkerLayer = L.layerGroup();
+    (droneRouteResult.route.waypoints || []).forEach((p, i) => {
+        const ll = droneXYToLatLng(p[0], p[1]);
+        if (!ll) return;
+        L.circleMarker(ll, { radius: 6, color: '#ffffff', weight: 2, fillColor: '#0b0f17', fillOpacity: 1 })
+            .bindTooltip('航点 ' + (i + 1)).addTo(routeMarkerLayer);
+    });
+    routeMarkerLayer.addTo(droneMap);
+
+    const b = droneMap.getBounds();
+    const pts = (droneRouteResult.route.waypoints || []).map(p => droneXYToLatLng(p[0], p[1])).filter(Boolean);
+    if (pts.length && !pts.every(ll => b.contains(ll))) {
+        droneMap.fitBounds(L.latLngBounds(pts).pad(0.3));
+    }
+}
+
+function clearRouteLayers() {
+    [routeLineLayer, routeMarkerLayer, routeSegLayer].forEach(l => {
+        if (l && droneMap) droneMap.removeLayer(l);
+    });
+    routeLineLayer = routeMarkerLayer = routeSegLayer = null;
+}
+
+async function runDroneRoute() {
+    if (!evalScenes.length) { showToast('请先添加情景（本地上传风场结果）', 'error'); return; }
+    if (droneRoute.length < 2) { showToast('请先绘制航线（至少 2 个航点）', 'error'); return; }
+
+    const alt = parseFloat((document.getElementById('drone-altitude') || {}).value || '60');
+    const vcrit = parseFloat((document.getElementById('drone-vcrit') || {}).value || '12');
+    const btn = document.getElementById('btn-drone-route-run');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 评估中...'; }
+    try {
+        const resp = await fetch('/api/eval/route', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                scene_ids: evalScenes.map(s => s.scene_id),
+                weights: evalScenes.map(s => s.weight),
+                context: 'drone',
+                waypoints: droneRoute,
+                altitude: alt,
+                v_crit: vcrit,          // 机型抗风阈值（用户可调）
+                n_samples: 200,
+            }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) { showToast(data.detail || '航线评估失败', 'error'); return; }
+        droneRouteResult = data;
+        renderDroneRouteResult(data);
+        showToast('航线评估完成', 'success');
+    } catch (e) {
+        showToast('航线评估失败: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🛫 评估航线'; }
+    }
+}
+
+function renderDroneRouteResult(d) {
+    const box = document.getElementById('drone-route-result');
+    if (box) box.style.display = '';
+    const fr = d.stats.grade_frac || {};
+    const set = (id, g) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = ((fr[String(g)] || 0) * 100).toFixed(1) + '%';
+    };
+    set('drone-rt-high', 3); set('drone-rt-medium', 2); set('drone-rt-low', 1); set('drone-rt-calm', 0);
+
+    const meta = document.getElementById('drone-rt-meta');
+    if (meta) {
+        meta.textContent =
+            `${d.route.n_samples} 采样点 · 航线 ${d.route.total_length.toFixed(0)} m · ` +
+            `飞行高度 ${d.route.altitude.toFixed(0)} m · 沿程风速 ${d.stats.v_min}~${d.stats.v_max} m/s（均值 ${d.stats.v_mean}） · ` +
+            `禁飞阈值 ${d.thresholds.v_eff.toFixed(1)} m/s`;
+    }
+
+    const risk = document.getElementById('drone-rt-risk');
+    if (risk) {
+        const labels = d.context.grade_labels || {};
+        if (!d.risk_runs.length) {
+            risk.innerHTML = '<div class="rec-item"><span class="rec-rank">—</span><span>全线无风险路段</span></div>';
+        } else {
+            risk.innerHTML = '<div class="recs-title recs-danger" style="margin:6px 0 4px">⚠️ 风险路段</div>'
+                + d.risk_runs.map((r, i) => {
+                    const lab = labels[String(r.max_grade)] || '风险';
+                    return `<div class="rec-item"><span class="rec-rank">#${i + 1}</span>` +
+                        `<span>沿程 ${r.s0.toFixed(0)}~${r.s1.toFixed(0)} m（${lab}）</span></div>`;
+                }).join('');
+        }
+        if (d.suggest_note) {
+            risk.innerHTML += `<div class="rec-item"><span class="rec-rank">💡</span><span>${d.suggest_note}</span></div>`;
+        }
+    }
+
+    const legend = document.getElementById('drone-rt-legend');
+    if (legend) {
+        legend.innerHTML = [0, 1, 2, 3].map(g =>
+            `<span><i style="background:${evalGradeColors[g]}"></i>${evalGradeLabels[g]}</span>`).join('');
+    }
+
+    renderRouteSegments();
+}
+
+function clearDroneRoute() {
+    droneRoute = []; droneRoutePoints = []; droneRouteResult = null;
+    clearRouteLayers();
+    const box = document.getElementById('drone-route-result');
+    if (box) box.style.display = 'none';
+    const runBtn = document.getElementById('btn-drone-route-run');
+    if (runBtn) runBtn.disabled = true;
+    if (droneRouteDrawing) finishRouteDraw();
+}
+
 function renderEvalResult(r) {
     // 情境（单车/无人机）由后端回传，决定分级标签与所在面板
     const info = r.context || null;
@@ -495,6 +853,16 @@ function renderEvalResult(r) {
     const riskLabel = assessCtx === 'drone' ? '禁飞风险区' : '风险区';
     if (recsS) recsS.innerHTML = renderTopList(r.top_suitable, suitLabel);
     if (recsR) recsR.innerHTML = renderTopList(r.top_risky, riskLabel);
+
+    // 记录网格范围，供无人机航线绘制的坐标换算使用
+    if (r.grid_bounds && r.grid_bounds_latlng) {
+        droneGridBounds = r.grid_bounds;
+        droneGridBoundsLatLng = r.grid_bounds_latlng;
+        if (assessCtx === 'drone') {
+            fitDroneMapToData();          // 缩到数据范围，方便在地图上画航线
+            renderRoutePtsList();
+        }
+    }
 
     // 地图叠图（默认分级）
     setEvalLayer('grade');

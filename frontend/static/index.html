@@ -216,9 +216,9 @@
                 <button class="assess-tab active" id="assess-tab-siting" onclick="switchAssessTab('eval')" title="共享单车停放适宜性评估（多情景 + 权重 + 本地上传/GNN）">
                     🚲 单车选址
                 </button>
-                <button class="assess-tab" id="assess-tab-drone" onclick="switchAssessTab('drone')" title="无人机航线风风险与适飞性评估">
+                <button class="assess-tab" id="assess-tab-drone" onclick="switchAssessTab('drone')" title="无人机航线适飞性评估：规划航线 → 沿程分级">
                     🛸 无人机路线评估
-                    <span class="assess-soon">建设中</span>
+                    <span class="assess-soon">可用</span>
                 </button>
             </nav>
             <div class="module-toolbar-controls">
@@ -240,7 +240,7 @@
             <div class="drone-module">
                 <div class="module-toolbar module-toolbar-sub">
                     <div class="module-toolbar-controls">
-                        <span class="assess-soon-lg">🚧 建设中：框架已就位，指标与航线规划待接入</span>
+                        <span class="assess-soon-lg">🚧 航线规划已可用；机型参数可在右侧调整</span>
                     </div>
                 </div>
 
@@ -280,9 +280,62 @@
                             </p>
                         </div>
 
+                        <!-- 航线规划 -->
+                        <div id="drone-route-box">
+                            <div class="eval-scenes-title">🛫 航线规划</div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>飞行高度 (m)</label>
+                                    <input type="number" id="drone-altitude" value="60" step="5" min="5" max="500">
+                                </div>
+                                <div class="form-group">
+                                    <label>机型抗风阈值 (m/s)</label>
+                                    <input type="number" id="drone-vcrit" value="12.0" step="0.5" min="3" max="30">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>&nbsp;</label>
+                                    <button class="btn" id="btn-drone-draw" style="width:100%" onclick="toggleRouteDraw()">✏️ 在地图上画航线</button>
+                                </div>
+                                <div class="form-group">
+                                    <label>&nbsp;</label>
+                                    <button class="btn btn-primary" id="btn-drone-route-run" style="width:100%" onclick="runDroneRoute()" disabled>🛫 评估航线</button>
+                                </div>
+                            </div>
+                            <p class="eval-hint" id="drone-route-hint">
+                                点「在地图上画航线」后依次点击地图落点（地图会自动缩放到数据范围），
+                                也可在下面直接输入米坐标。评估按飞行高度用幂律剖面（α=0.22）换算。
+                            </p>
+                            <div id="drone-route-pts"></div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>&nbsp;</label>
+                                    <button class="btn btn-sm" style="width:100%" onclick="addRoutePtManual()">＋ 添加航点</button>
+                                </div>
+                                <div class="form-group">
+                                    <label>&nbsp;</label>
+                                    <button class="btn btn-sm btn-danger" style="width:100%" onclick="clearDroneRoute()">清空航线</button>
+                                </div>
+                            </div>
+                        </div>
+
                         <div id="drone-scenes-wrap" style="display:none">
                             <div class="eval-scenes-title">🧩 情景列表 <span class="eval-hint-inline">（权重支持自定义）</span></div>
                             <div id="drone-scenes" class="eval-scenes"></div>
+                        </div>
+
+                        <div id="drone-route-result" style="display:none">
+                            <div class="eval-scenes-title">🛫 航线评估结果</div>
+                            <div class="siting-stats-grid">
+                                <div class="stat-card stat-high"><span class="stat-num" id="drone-rt-high">0%</span><span class="stat-label">禁飞风险</span></div>
+                                <div class="stat-card stat-medium"><span class="stat-num" id="drone-rt-medium">0%</span><span class="stat-label">谨慎飞行</span></div>
+                                <div class="stat-card stat-low"><span class="stat-num" id="drone-rt-low">0%</span><span class="stat-label">适飞</span></div>
+                                <div class="stat-card stat-calm"><span class="stat-num" id="drone-rt-calm">0%</span><span class="stat-label">悬停受限</span></div>
+                            </div>
+                            <p class="siting-meta" id="drone-rt-meta"></p>
+                            <div id="drone-rt-risk" class="recs-list"></div>
+                            <div id="drone-rt-legend" class="siting-legend"></div>
                         </div>
 
                         <div id="drone-result" style="display:none">
