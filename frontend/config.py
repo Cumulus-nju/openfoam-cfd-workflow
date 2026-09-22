@@ -89,16 +89,32 @@ WRITE_INTERVAL = 100
 
 # ── OSM Defaults ─────────────────────────────────────────────────────────────
 
-# 2026-09 实测：nchc 主端点已失效（SSL 中断），openstreetmap.ru 握手超时；
-# 可用端点（按延迟排序）：z.overpass-api.de (1.8s) → overpass-api.de (7s) → kumi (12s) → osm.ch (快但数据少，作末位兜底)
-OSM_OVERPASS_URL = "https://z.overpass-api.de/api/interpreter"
-OSM_OVERPASS_FALLBACKS = [
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.osm.ch/api/interpreter",
-    "https://overpass.nchc.org.tw/api/interpreter",
-]
-OSM_TIMEOUT = 90  # seconds (increased for slow connections)
+# 2026-09-22 实测（探针 + 真实建筑查询）：
+#   z.overpass-api.de   探针 2.2s / 建筑查询 11s   ✅ 主端点
+#   overpass-api.de     探针 3.4s / 建筑查询  8s   ✅ 兜底（两者高峰期会回 504）
+#   overpass.osm.ch     探针 4.0s 但建筑查询仅回 0.3KB（数据陈旧/不全）⚠️ 默认不启用
+#   kumi.systems        超时 40s+ / 120s+，常年挂死      ❌ 已移除
+#   nchc.org.tw         SSL 握手直接失败               ❌ 已移除
+# 把挂死端点留在链路里会让一次导入最坏挂 7 分钟，观感等于“卡死”。
+#
+# 可用 URBANWIND_OVERPASS_URL 覆盖主端点（自建实例/更快镜像）。
+# 用分号分隔多个端点，例如：
+#   set URBANWIND_OVERPASS_URL=https://overpass-api.de/api/interpreter;https://your.mirror/api
+_ovp_raw = os.environ.get("URBANWIND_OVERPASS_URL", "").strip()
+if _ovp_raw:
+    _ovp_list = [u.strip() for u in _ovp_raw.replace(",", ";").split(";") if u.strip()]
+    OSM_OVERPASS_URL = _ovp_list[0]
+    OSM_OVERPASS_FALLBACKS = _ovp_list[1:]
+else:
+    OSM_OVERPASS_URL = "https://z.overpass-api.de/api/interpreter"
+    OSM_OVERPASS_FALLBACKS = [
+        "https://overpass-api.de/api/interpreter",
+    ]
+
+# Overpass 查询自身的服务端超时（写进 QL 的 [timeout:N]）
+OSM_TIMEOUT = int(os.environ.get("URBANWIND_OSM_TIMEOUT", "60"))
+# 单个端点的 HTTP 等待上限（秒）。原先复用 90s，×5 个端点 = 最坏 7.5 分钟。
+OSM_ENDPOINT_TIMEOUT = int(os.environ.get("URBANWIND_OSM_ENDPOINT_TIMEOUT", "45"))
 
 # ── Server ───────────────────────────────────────────────────────────────────
 

@@ -19,7 +19,9 @@ from ..schema import (
     SitePlan, Feature, Geometry, BuildingType, SourceType,
     make_building_feature, BuildingProperties,
 )
-from ..config import OSM_OVERPASS_URL, OSM_OVERPASS_FALLBACKS, OSM_TIMEOUT
+from ..config import (
+    OSM_OVERPASS_URL, OSM_OVERPASS_FALLBACKS, OSM_TIMEOUT, OSM_ENDPOINT_TIMEOUT,
+)
 import logging
 logger = logging.getLogger("urbanwind")
 
@@ -113,6 +115,9 @@ def _extract_height(osm_tags: Dict[str, str]) -> Optional[float]:
 
 # ── Overpass query builder ───────────────────────────────────────────────────
 
+# 上一次成功查询所用的端点（诊断用；写入 plan.metadata）
+_last_overpass_endpoint: Optional[str] = None
+
 
 def _build_overpass_query(bbox: Tuple[float, float, float, float]) -> str:
     """
@@ -138,13 +143,31 @@ out skel qt;
 
 
 def _query_overpass(query: str) -> Optional[Dict[str, Any]]:
-    """Execute an Overpass API query with automatic fallback on failure."""
-    urls = [OSM_OVERPASS_URL] + list(OSM_OVERPASS_FALLBACKS)
-    last_error = None
+    """Execute an Overpass API query with automatic fallback on failure.
 
-    for url in urls:
+    2026-09 实测（探针 + 建筑查询）：
+      z.overpass-api.de   2.2s / 建筑 11s   ✅ 主端点
+      overpass-api.de     3.4s / 建筑  8s   ✅ 兜底
+      kumi.systems        超时 40s+/120s+   ❌ 常年挂死，已从链路移除
+      osm.ch              4.0s 但建筑查询只回 0.3KB（数据旧）⚠️ 仅末位
+      nchc.org.tw         SSL 握手直接失败  ❌ 已移除
+
+    原先 5 个端点各等 90s，最坏要挂 7 分钟才报错，观感像“卡死”。
+    现在：单端点限时 OSM_ENDPOINT_TIMEOUT，全链总时长有上限。
+    """
+    urls = [OSM_OVERPASS_URL] + list(OSM_OVERPASS_FALLBACKS)
+    global _last_overpass_endpoint
+    # 去重并保持顺序
+    seen, ordered = set(), []
+    for u in urls:
+        if u and u not in seen:
+            seen.add(u)
+            ordered.append(u)
+
+    last_error = None
+    for idx, url in enumerate(ordered, 1):
         try:
-            logger.info(f"Trying Overpass: {url}")
+            logger.info(f"Trying Overpass [{idx}/{len(ordered)}]: {url}")
             req = Request(
                 url,
                 data=query.encode("utf-8"),
@@ -153,16 +176,23 @@ def _query_overpass(query: str) -> Optional[Dict[str, Any]]:
                     "Content-Type": "application/x-www-form-urlencoded",
                 },
             )
-            with urlopen(req, timeout=OSM_TIMEOUT) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                logger.info(f"Overpass success: {url}")
+            with urlopen(req, timeout=OSM_ENDPOINT_TIMEOUT) as resp:
+                raw = resp.read()
+                data = json.loads(raw.decode("utf-8"))
+                n = len(data.get("elements", []))
+                logger.info(f"Overpass success: {url} ({n} elements, {len(raw)/1024:.1f} KB)")
+                _last_overpass_endpoint = url
                 return data
         except Exception as e:
             last_error = e
-            logger.warning(f"Overpass failed ({url}): {e}")
+            logger.warning(f"Overpass failed [{idx}/{len(ordered)}] ({url}): {e}")
             continue
 
-    raise ConnectionError(f"All Overpass endpoints failed. Last error: {last_error}")
+    raise ConnectionError(
+        f"所有 Overpass 端点均失败（{len(ordered)} 个）。最后错误: {last_error}。"
+        "公共 Overpass 实例高峰期会返回 504，可稍后重试；"
+        "或设置环境变量 URBANWIND_OVERPASS_URL 指向自建/镜像端点。"
+    )
 
 
 # ── Geometry helpers ─────────────────────────────────────────────────────────
@@ -368,6 +398,7 @@ class OSMAdapter(AbstractAdapter):
                 "center_lon": center_lon,
                 "num_buildings": len(features),
                 "query_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "overpass_endpoint": _last_overpass_endpoint,
                 "data_license": "OpenStreetMap © OpenStreetMap contributors (ODbL)",
             },
         )
