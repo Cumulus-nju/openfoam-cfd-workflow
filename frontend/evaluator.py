@@ -57,7 +57,7 @@ GRID_MAX = 300       # 参考网格最大边长（超出则自动放大网格尺
 POINT_LIMIT = 2_000_000   # 单场景点数量上限
 
 GRADE_COLORS = {0: "#38bdf8", 1: "#10b981", 2: "#f59e0b", 3: "#ef4444"}
-GRADE_LABELS = {0: "静风区", 1: "适宜", 2: "中风险", 3: "高风险"}
+GRADE_LABELS = {0: "基本无风", 1: "低风险", 2: "中风险", 3: "高风险"}
 
 # ── 评估情境（同一套多情景加权框架，按用途换阈值与措辞） ──────────────────────
 # 单车：以倾覆临界风速为标尺（bike_wind_overturning_model.tex）
@@ -73,7 +73,7 @@ CONTEXTS: Dict[str, Dict[str, Any]] = {
         "high_factor": HIGH_FACTOR,    # 0.8
         "medium_factor": MEDIUM_FACTOR,# 0.5
         "calm_speed": CALM_SPEED,      # 1.5
-        "grade_labels": dict(GRADE_LABELS),
+        "grade_labels": {0: "基本无风", 1: "低风险", 2: "中风险", 3: "高风险"},
         "title": "UrbanWind 综合评估 · 单车停放适宜性（多情景加权）",
         "metric_name": "加权平均风速",
     },
@@ -90,7 +90,7 @@ CONTEXTS: Dict[str, Dict[str, Any]] = {
         "high_factor": 0.85,
         "medium_factor": 0.55,
         "calm_speed": 2.0,
-        "grade_labels": {0: "风力不足/悬停受限", 1: "适飞", 2: "谨慎飞行", 3: "禁飞风险"},
+        "grade_labels": {0: "基本无风", 1: "低风险", 2: "谨慎飞行", 3: "禁飞风险"},
         "title": "UrbanWind 综合评估 · 无人机航线适飞性（多情景加权）",
         "metric_name": "加权平均风速",
     },
@@ -474,28 +474,36 @@ def aggregate(scenes: List[Dict[str, Any]], weights: List[float],
     mean = np.nansum(np.where(valid, stack, 0.0) * w[:, None, None], axis=0)
     mean = np.where(wsum > 0, mean / np.where(wsum > 0, wsum, 1.0), np.nan)
 
+    # 分级阈值（平均风速口径，绝对 m/s）
+    #   v_eff         = v_crit × gust_factor        -> 高风险线（阵风口径换算到平均口径）
+    #   warn_th  = v_crit × high_factor   × gust_factor -> 中风险线
+    #   low_th   = v_crit × medium_factor × gust_factor -> 低风险线
+    #   注意：三条线都是「阵风口径阈值 × 比例 × 口径换算」，
+    #   不是把已换算的 v_eff 再乘比例（那样会重复折减，2026-09-22 用户确认去掉）。
     calm = ((stack < calm_speed).astype(np.float64) * valid)
     v_eff = v_crit * gust_factor
+    warn_th = v_crit * high_factor * gust_factor
+    low_th = v_crit * medium_factor * gust_factor
     strong = ((stack > v_eff).astype(np.float64) * valid)
     wsum_safe = np.where(wsum > 0, wsum, 1.0)
     calm_freq = np.where(wsum > 0, np.nansum(calm * w[:, None, None], axis=0) / wsum_safe, np.nan)
     strong_freq = np.where(wsum > 0, np.nansum(strong * w[:, None, None], axis=0) / wsum_safe, np.nan)
 
-    # 分级：0 静风 / 1 适宜 / 2 中风险 / 3 高风险
+    # 分级：0 静风 / 1 低风险 / 2 中风险 / 3 高风险
     grade = np.full((H, W), np.nan, dtype=np.float64)
-    hi_th = high_factor * v_eff
-    med_th = medium_factor * v_eff
-    grade = np.where(mean >= hi_th, 3.0, 0.0)
+    grade = np.where(mean >= v_eff, 3.0, 0.0)
     grade = np.where((grade == 0) & (strong_freq >= strong_high), 3.0, grade)
-    grade = np.where((grade == 0) & (mean >= med_th), 2.0, grade)
+    grade = np.where((grade == 0) & (mean >= warn_th), 2.0, grade)
     grade = np.where((grade == 0) & (strong_freq >= strong_med), 2.0, grade)
-    grade = np.where((grade == 0) & (mean >= calm_speed), 1.0, grade)
+    grade = np.where((grade == 0) & (mean >= low_th), 1.0, grade)
 
     # 统计（剔除 NaN/建筑）
     valid = ~np.isnan(mean)
     stats = {
         "n_scenes": n,
         "v_eff": float(v_eff),
+        "warn_th": float(warn_th),
+        "low_th": float(low_th),
         "calm_speed": calm_speed,
         "mean_min": float(np.nanmin(mean)) if valid.any() else None,
         "mean_max": float(np.nanmax(mean)) if valid.any() else None,
@@ -738,7 +746,10 @@ def render_report(mean, calm_freq, strong_freq, grade, grid_x, grid_y,
                      label=f"{grade_labels.get(g, GRADE_LABELS[g])} {fr.get(g, 0) * 100:.1f}%")
                for g in (0, 1, 2, 3)]
     ax.legend(handles=handles, loc="upper right", fontsize=9, framealpha=0.9)
-    ax.set_title(f"④ {ctx.get('ground', '停放')}适宜性分级", fontsize=11)
+    thr_txt = (f"④ {ctx.get('ground', '停放')}适宜性分级"
+               f"（高≥{stats.get('v_eff', 0):.2f} / 中≥{stats.get('warn_th', 0):.2f}"
+               f" / 低≥{stats.get('low_th', 0):.2f} m/s）")
+    ax.set_title(thr_txt, fontsize=10)
 
     for ax in axes.ravel():
         ax.set_xlabel("x (m)", fontsize=9)

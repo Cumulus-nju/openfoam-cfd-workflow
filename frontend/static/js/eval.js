@@ -18,7 +18,7 @@ let evalResult = null;         // /api/eval/run 响应
 let evalLayer = 'grade';       // 当前图层: grade|mean|calm|strong
 
 const EVAL_GRADE_COLORS = { 0: '#38bdf8', 1: '#10b981', 2: '#f59e0b', 3: '#ef4444' };
-const EVAL_GRADE_LABELS = { 0: '静风区', 1: '适宜', 2: '中风险', 3: '高风险' };
+const EVAL_GRADE_LABELS = { 0: '基本无风', 1: '低风险', 2: '中风险', 3: '高风险' };
 
 // ── 评估情境（单车 / 无人机）──────────────────────────────────────────────────
 // 两个子板块共用同一套框架；只有阈值、图例文字与所在面板不同。
@@ -696,7 +696,7 @@ function renderRouteLine() {
     }
 }
 
-/** 按分级给航段着色（3 禁飞红 / 2 谨慎橙 / 1 适飞绿 / 0 悬停受限蓝） */
+/** 按分级给航段着色（3 禁飞红 / 2 谨慎橙 / 1 低风险绿 / 0 基本无风蓝） */
 function renderRouteSegments() {
     if (!droneMap || !droneRouteResult) return;
     if (routeSegLayer) { droneMap.removeLayer(routeSegLayer); routeSegLayer = null; }
@@ -857,11 +857,13 @@ function renderEvalResult(r) {
     const meta = $el('eval-meta');
     if (meta) {
         const name = (info && info.label) || '共享单车停放适宜性';
-        const crit = assessCtx === 'drone' ? '机型抗风等级修正阈值' : '阵风修正阈值';
+        const s = r.stats || {};
+        const thr = (s.v_eff != null)
+            ? `分级线 高≥${s.v_eff.toFixed(2)} / 中≥${(s.warn_th ?? 0).toFixed(2)} / 低≥${(s.low_th ?? 0).toFixed(2)} m/s`
+            : '';
         const txt =
-            `${name} · ${r.stats.n_scenes} 个情景 · 加权平均风速 ` +
-            `${r.stats.mean_min?.toFixed?.(1) ?? r.stats.mean_min} ~ ${r.stats.mean_max?.toFixed?.(1) ?? r.stats.mean_max} m/s · ` +
-            `${crit} ${r.stats.v_eff.toFixed(2)} m/s`;
+            `${name} · ${s.n_scenes} 个情景 · 加权平均风速 ` +
+            `${s.mean_min?.toFixed?.(1) ?? s.mean_min} ~ ${s.mean_max?.toFixed?.(1) ?? s.mean_max} m/s · ` + thr;
         meta.textContent = txt;
         evalCtxMeta[assessCtx] = txt;   // 供切回该子板块时恢复
     }
@@ -887,8 +889,8 @@ function renderEvalResult(r) {
     // Top 推荐/危险（措辞按情境）
     const recsS = $el('eval-recs-suitable');
     const recsR = $el('eval-recs-risky');
-    const suitLabel = assessCtx === 'drone' ? '适飞区' : '适宜区';
-    const riskLabel = assessCtx === 'drone' ? '禁飞风险区' : '风险区';
+    const suitLabel = assessCtx === 'drone' ? '低风险区' : '低风险区';
+    const riskLabel = assessCtx === 'drone' ? '禁飞风险区' : '高风险区';
     if (recsS) recsS.innerHTML = renderTopList(r.top_suitable, suitLabel);
     if (recsR) recsR.innerHTML = renderTopList(r.top_risky, riskLabel);
 

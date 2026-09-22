@@ -234,8 +234,8 @@ function setAssessContext(ctx) {
     assessCtx = (ctx === 'drone') ? 'drone' : 'bike';
     if (typeof evalGradeLabels !== 'undefined') {
         evalGradeLabels = (assessCtx === 'drone')
-            ? { 0: '风力不足/悬停受限', 1: '适飞', 2: '谨慎飞行', 3: '禁飞风险' }
-            : { 0: '静风区', 1: '适宜', 2: '中风险', 3: '高风险' };
+            ? { 0: '基本无风', 1: '低风险', 2: '谨慎飞行', 3: '禁飞风险' }
+            : { 0: '基本无风', 1: '低风险', 2: '中风险', 3: '高风险' };
     }
     if (typeof refreshAssessPanels === 'function') refreshAssessPanels();
 }
