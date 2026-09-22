@@ -9,17 +9,85 @@
 
 let evalMap = null;
 let evalMapReady = false;
-let evalOverlay = null;        // L.imageOverlay
-let evalScenes = [];           // 情景列表（前端元数据）
+let evalOverlay = null;        // L.imageOverlay（单车面板）
+let droneMap = null;           // 无人机面板独立地图
+let droneMapReady = false;
+let droneOverlay = null;
+let evalScenes = [];           // 情景列表（两个子板块共用）
 let evalResult = null;         // /api/eval/run 响应
 let evalLayer = 'grade';       // 当前图层: grade|mean|calm|strong
 
 const EVAL_GRADE_COLORS = { 0: '#38bdf8', 1: '#10b981', 2: '#f59e0b', 3: '#ef4444' };
 const EVAL_GRADE_LABELS = { 0: '静风区', 1: '适宜', 2: '中风险', 3: '高风险' };
 
+// ── 评估情境（单车 / 无人机）──────────────────────────────────────────────────
+// 两个子板块共用同一套框架；只有阈值、图例文字与所在面板不同。
+
+let assessCtx = 'bike';        // 当前情境：bike | drone
+let evalGradeColors = Object.assign({}, EVAL_GRADE_COLORS);
+let evalGradeLabels = Object.assign({}, EVAL_GRADE_LABELS);
+// 记录每个情境下是否已有渲染好的结果（evalResult 为两边共享）
+let evalCtxLabels = { bike: false, drone: false };
+// 各情境的 meta 文字（两个面板各存一份，切回时恢复）
+let evalCtxMeta = { bike: '', drone: '' };
+
+/**
+ * 按当前情境取元素。
+ * 单车面板（#eval-module）用原始 id；无人机面板用 `drone-` 前缀 id
+ * （eval-stat-high → drone-stat-high），避免两套面板重复 id。
+ */
+function $el(id) {
+    if (assessCtx === 'bike') {
+        return document.getElementById(id);
+    }
+    const map = {
+        'eval-empty': 'drone-empty',
+        'eval-result': 'drone-result',
+        'eval-meta': 'drone-meta',
+        'eval-scene-stats': 'drone-scene-stats',
+        'eval-legend': 'drone-legend',
+        'eval-report-img': 'drone-report-img',
+        'eval-map-note': 'drone-map-note',
+    };
+    const mapped = map[id] || id;
+    const droneId = mapped.startsWith('eval-') ? 'drone-' + mapped.slice(5) : mapped;
+    return document.getElementById(droneId);
+}
+
+/** 按报告图 / 图例 / 统计卡的分级标签切换情境 */
+function applyCtxLabels(ctx) {
+    const labels = (ctx && ctx.grade_labels) || null;
+    if (assessCtx === 'drone' && labels) {
+        evalGradeLabels = labels;
+    } else if (assessCtx === 'bike' && !labels) {
+        evalGradeLabels = Object.assign({}, EVAL_GRADE_LABELS);
+    } else if (labels) {
+        evalGradeLabels = labels;
+    } else {
+        evalGradeLabels = Object.assign({}, EVAL_GRADE_LABELS);
+    }
+}
+
+/** 地图/叠加层按情境各自独立 */
+function currentEvalMap() {
+    if (assessCtx === 'drone') return droneMap;
+    return evalMap;
+}
+
+function currentEvalOverlay() {
+    return assessCtx === 'drone' ? droneOverlay : evalOverlay;
+}
+
+function setCurrentEvalOverlay(layer) {
+    if (assessCtx === 'drone') droneOverlay = layer;
+    else evalOverlay = layer;
+}
+
 // ── 地图（懒初始化）────────────────────────────────────────────────────────
 
 function ensureEvalMap() {
+    // 按当前情境初始化对应面板的地图（两个子板块各自独立）
+    if (assessCtx === 'drone') return ensureDroneMap();
     if (evalMapReady) {
         evalMap.invalidateSize();
         return;
@@ -46,13 +114,43 @@ function ensureEvalMap() {
     if (!window._evalCasesLoaded) loadEvalCases();
 }
 
+function ensureDroneMap() {
+    if (droneMapReady) {
+        droneMap.invalidateSize();
+        return;
+    }
+    droneMapReady = true;
+
+    droneMap = L.map('drone-map', {
+        center: [32.06, 118.78],
+        zoom: 15,
+        zoomControl: false,
+        attributionControl: true,
+    });
+
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri — World Dark Gray Canvas',
+        maxZoom: 20,
+    }).addTo(droneMap);
+
+    L.control.zoom({ position: 'topleft' }).addTo(droneMap);
+    L.control.scale({ position: 'bottomleft', metric: true, imperial: false }).addTo(droneMap);
+
+    setTimeout(() => droneMap.invalidateSize(), 100);
+}
+
 // ── 数据源切换 ─────────────────────────────────────────────────────────────
 
 function switchEvalSource(name) {
-    document.getElementById('eval-tab-upload').classList.toggle('active', name === 'upload');
-    document.getElementById('eval-tab-gnn').classList.toggle('active', name === 'gnn');
-    document.getElementById('eval-upload-box').style.display = name === 'upload' ? '' : 'none';
-    document.getElementById('eval-gnn-box').style.display = name === 'gnn' ? '' : 'none';
+    // 数据源 Tab 在两个子板块各有一套（单车 eval-*，无人机 drone-*）
+    const up = $el('eval-tab-upload');
+    const gn = $el('eval-tab-gnn');
+    const upBox = $el('eval-upload-box');
+    const gnBox = $el('eval-gnn-box');
+    if (up) up.classList.toggle('active', name === 'upload');
+    if (gn) gn.classList.toggle('active', name === 'gnn');
+    if (upBox) upBox.style.display = name === 'upload' ? '' : 'none';
+    if (gnBox) gnBox.style.display = name === 'gnn' ? '' : 'none';
 }
 
 // ── 情景：本地上传 ──────────────────────────────────────────────────────────
@@ -160,8 +258,8 @@ function addEvalScenes(scenes) {
 }
 
 function renderEvalSceneRows() {
-    const wrap = document.getElementById('eval-scenes-wrap');
-    const box = document.getElementById('eval-scenes');
+    const wrap = $el('eval-scenes-wrap');
+    const box = $el('eval-scenes');
     const count = document.getElementById('eval-scene-count');
     const runBtn = document.getElementById('btn-eval-run');
 
@@ -222,12 +320,26 @@ async function clearEvalScenes() {
     if (!evalScenes.length) return;
     evalScenes = [];
     evalResult = null;
+    evalCtxLabels = { bike: false, drone: false };
+    evalCtxMeta = { bike: '', drone: '' };
     renderEvalSceneRows();
-    document.getElementById('eval-empty').style.display = '';
-    document.getElementById('eval-result').style.display = 'none';
-    if (evalOverlay) { evalMap.removeLayer(evalOverlay); evalOverlay = null; }
-    const note = document.getElementById('eval-map-note');
-    if (note) note.style.display = 'none';
+    // 两个子板块的空态/结果区一起复位
+    ['eval-empty', 'drone-empty'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = '';
+    });
+    ['eval-result', 'drone-result'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+    [[evalMap, evalOverlay], [droneMap, droneOverlay]].forEach(([m, o]) => {
+        if (o && m) m.removeLayer(o);
+    });
+    evalOverlay = null; droneOverlay = null;
+    ['eval-map-note', 'drone-map-note'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
     try { await fetch('/api/eval/clear', { method: 'POST' }); } catch (e) { /* 忽略 */ }
     showToast('已清空情景', 'info');
 }
@@ -261,6 +373,7 @@ async function runEval() {
             body: JSON.stringify({
                 scene_ids: evalScenes.map(s => s.scene_id),
                 weights: evalScenes.map(s => s.weight),
+                context: assessCtx,          // bike | drone：后端据此换阈值与措辞
             }),
         });
         const data = await resp.json();
@@ -277,43 +390,111 @@ async function runEval() {
 
 // ── 结果渲染 ─────────────────────────────────────────────────────────────────
 
+// ── 情境切换时的面板同步 ─────────────────────────────────────────────────────
+
+/** 统计卡下方的文字标签按情境更新（两个面板各写各的） */
+function syncStatLabels(rootSel) {
+    const grid = document.querySelector(rootSel + ' .siting-stats-grid');
+    if (!grid) return;
+    // 顺序：stat-high(grade3) → medium(2) → low(1) → calm(0)
+    ['stat-high', 'stat-medium', 'stat-low', 'stat-calm'].forEach((cls, i) => {
+        const lab = grid.querySelector('.' + cls + ' .stat-label');
+        if (lab) lab.textContent = evalGradeLabels[3 - i] || lab.textContent;
+    });
+}
+
+/**
+ * 切换子板块后刷新两个面板的显示。
+ * evalResult 是共享状态：任意一边运行过后，两边都应能看到结果，
+ * 只是分级标签随各自情境不同（单车=倾覆阈值，无人机=机型抗风等级）。
+ */
+function refreshAssessPanels() {
+    if (typeof evalCtxLabels === 'undefined') return;
+    const resBox = document.getElementById('eval-result');
+    const emptyBox = document.getElementById('eval-empty');
+    if (resBox) resBox.style.display = evalCtxLabels.bike ? '' : 'none';
+    if (emptyBox) emptyBox.style.display = evalCtxLabels.bike ? 'none' : '';
+    syncStatLabels('#eval-result');
+    const bikeMeta = document.getElementById('eval-meta');
+    if (bikeMeta && evalCtxLabels.bike) bikeMeta.textContent = evalCtxMeta.bike;
+
+    const dResBox = document.getElementById('drone-result');
+    const dEmptyBox = document.getElementById('drone-empty');
+    if (dResBox) dResBox.style.display = evalCtxLabels.drone ? '' : 'none';
+    if (dEmptyBox) dEmptyBox.style.display = evalCtxLabels.drone ? 'none' : '';
+    syncStatLabels('#drone-result');
+    const droneMeta = document.getElementById('drone-meta');
+    if (droneMeta && evalCtxLabels.drone) droneMeta.textContent = evalCtxMeta.drone;
+
+    // 图例 / 叠图按当前情境重绘（叠图落在 currentEvalMap 上）
+    if (typeof evalResult !== 'undefined' && evalResult && typeof setEvalLayer === 'function') {
+        setEvalLayer(typeof evalLayer !== 'undefined' ? evalLayer : 'grade');
+    }
+}
+
 function renderEvalResult(r) {
-    const empty = document.getElementById('eval-empty');
-    const resultBox = document.getElementById('eval-result');
-    empty.style.display = 'none';
-    resultBox.style.display = '';
+    // 情境（单车/无人机）由后端回传，决定分级标签与所在面板
+    const info = r.context || null;
+    if (info && info.key) assessCtx = info.key;
+    if (info) applyCtxLabels(info);
 
-    // 统计卡（分级占比）
+    const empty = $el('eval-empty');
+    const resultBox = $el('eval-result');
+    if (empty) empty.style.display = 'none';
+    if (resultBox) resultBox.style.display = '';
+
+    // 统计卡（分级占比）——标签按情境换
     const fr = r.stats.grade_frac || {};
-    document.getElementById('eval-stat-high').textContent = ((fr['3'] || 0) * 100).toFixed(1) + '%';
-    document.getElementById('eval-stat-medium').textContent = ((fr['2'] || 0) * 100).toFixed(1) + '%';
-    document.getElementById('eval-stat-low').textContent = ((fr['1'] || 0) * 100).toFixed(1) + '%';
-    document.getElementById('eval-stat-calm').textContent = ((fr['0'] || 0) * 100).toFixed(1) + '%';
+    const setStat = (id, gradeIdx) => {
+        const el = $el(id);
+        if (el) el.textContent = ((fr[String(gradeIdx)] || 0) * 100).toFixed(1) + '%';
+    };
+    setStat('eval-stat-high', 3);
+    setStat('eval-stat-medium', 2);
+    setStat('eval-stat-low', 1);
+    setStat('eval-stat-calm', 0);
 
-    document.getElementById('eval-meta').textContent =
-        `${r.stats.n_scenes} 个情景 · 加权平均风速 ${r.stats.mean_min?.toFixed?.(1) ?? r.stats.mean_min} ~ ${r.stats.mean_max?.toFixed?.(1) ?? r.stats.mean_max} m/s · ` +
-        `阵风修正阈值 ${r.stats.v_eff.toFixed(2)} m/s（V_crit 11.7 × 0.67）`;
+    // 统计卡下方文字标签由 refreshAssessPanels/syncStatLabels 统一按情境写
+    evalCtxLabels[assessCtx] = true;
+    syncStatLabels(assessCtx === 'drone' ? '#drone-result' : '#eval-result');
+
+    const meta = $el('eval-meta');
+    if (meta) {
+        const name = (info && info.label) || '共享单车停放适宜性';
+        const crit = assessCtx === 'drone' ? '机型抗风等级修正阈值' : '阵风修正阈值';
+        const txt =
+            `${name} · ${r.stats.n_scenes} 个情景 · 加权平均风速 ` +
+            `${r.stats.mean_min?.toFixed?.(1) ?? r.stats.mean_min} ~ ${r.stats.mean_max?.toFixed?.(1) ?? r.stats.mean_max} m/s · ` +
+            `${crit} ${r.stats.v_eff.toFixed(2)} m/s`;
+        meta.textContent = txt;
+        evalCtxMeta[assessCtx] = txt;   // 供切回该子板块时恢复
+    }
 
     // 每情景统计
-    const ss = document.getElementById('eval-scene-stats');
-    ss.innerHTML = '<div class="eval-scenes-title">🌪 各情景风速</div>';
-    const tbl = document.createElement('table');
-    tbl.className = 'eval-stats-table';
-    tbl.innerHTML = '<tr><th>情景</th><th>最小</th><th>平均</th><th>最大</th></tr>';
-    for (const s of r.scene_stats || []) {
-        tbl.innerHTML += `<tr><td>${s.wind_direction} · ${s.inlet_speed}m/s</td><td>${s.min}</td><td>${s.mean}</td><td>${s.max}</td></tr>`;
+    const ss = $el('eval-scene-stats');
+    if (ss) {
+        ss.innerHTML = '<div class="eval-scenes-title">🌪 各情景风速</div>';
+        const tbl = document.createElement('table');
+        tbl.className = 'eval-stats-table';
+        tbl.innerHTML = '<tr><th>情景</th><th>最小</th><th>平均</th><th>最大</th></tr>';
+        for (const s of r.scene_stats || []) {
+            tbl.innerHTML += `<tr><td>${s.wind_direction} · ${s.inlet_speed}m/s</td><td>${s.min}</td><td>${s.mean}</td><td>${s.max}</td></tr>`;
+        }
+        ss.appendChild(tbl);
     }
-    ss.appendChild(tbl);
 
     // 图例随图层更新（setEvalLayer 内处理）
     // 报告图
-    document.getElementById('eval-report-img').src = r.report_png;
+    const rep = $el('eval-report-img');
+    if (rep) rep.src = r.report_png;
 
-    // Top 推荐/危险
-    const recsS = document.getElementById('eval-recs-suitable');
-    const recsR = document.getElementById('eval-recs-risky');
-    recsS.innerHTML = renderTopList(r.top_suitable, '适宜区');
-    recsR.innerHTML = renderTopList(r.top_risky, '风险区');
+    // Top 推荐/危险（措辞按情境）
+    const recsS = $el('eval-recs-suitable');
+    const recsR = $el('eval-recs-risky');
+    const suitLabel = assessCtx === 'drone' ? '适飞区' : '适宜区';
+    const riskLabel = assessCtx === 'drone' ? '禁飞风险区' : '风险区';
+    if (recsS) recsS.innerHTML = renderTopList(r.top_suitable, suitLabel);
+    if (recsR) recsR.innerHTML = renderTopList(r.top_risky, riskLabel);
 
     // 地图叠图（默认分级）
     setEvalLayer('grade');
@@ -332,7 +513,9 @@ function renderTopList(list, label) {
 
 function setEvalLayer(kind) {
     evalLayer = kind;
-    document.querySelectorAll('.eval-layer-btn').forEach(b =>
+    // 图层按钮有两套（单车/无人机），只切换当前面板内的
+    const scope = document.querySelector(assessCtx === 'drone' ? '#drone-layer-switch' : '#eval-layer-switch');
+    (scope ? scope.querySelectorAll('.eval-layer-btn') : []).forEach(b =>
         b.classList.toggle('active', b.dataset.layer === kind));
     if (!evalResult) return;
 
@@ -342,32 +525,36 @@ function setEvalLayer(kind) {
     else if (kind === 'calm') { grid = evalResult.calm_freq_grid; label = '静风频率'; }
     else { grid = evalResult.strong_freq_grid; label = '强风频率'; }
 
-    // 图例随图层更新
-    const legend = document.getElementById('eval-legend');
-    if (kind === 'grade') {
-        legend.innerHTML = [0, 1, 2, 3].map(g =>
-            `<span><i style="background:${EVAL_GRADE_COLORS[g]}"></i>${EVAL_GRADE_LABELS[g]}</span>`).join('');
-    } else {
-        legend.innerHTML = '<span style="font-size:11px;color:var(--text-muted)">'
-            + (kind === 'mean' ? '颜色越暖 = 风速越大 (m/s)'
-                : kind === 'calm' ? '颜色越红 = 静风频率越高 (%情景时间静风)'
-                : '颜色越红 = 强风频率越高 (%情景时间超过阵风阈值)')
-            + '</span>';
+    // 图例随图层更新（分级图例的文字按情境）
+    const legend = $el('eval-legend');
+    if (legend) {
+        if (kind === 'grade') {
+            legend.innerHTML = [0, 1, 2, 3].map(g =>
+                `<span><i style="background:${evalGradeColors[g]}"></i>${evalGradeLabels[g]}</span>`).join('');
+        } else {
+            legend.innerHTML = '<span style="font-size:11px;color:var(--text-muted)">'
+                + (kind === 'mean' ? '颜色越暖 = 风速越大 (m/s)'
+                    : kind === 'calm' ? '颜色越红 = 静风频率越高 (%情景时间静风)'
+                    : '颜色越红 = 强风频率越高 (%情景时间超过阵风阈值)')
+                + '</span>';
+        }
     }
 
     const dataUrl = drawEvalGridToCanvas(grid, kind);
     if (!dataUrl) { clearEvalOverlay(); return; }
 
+    const map = currentEvalMap();
     const latlng = evalResult.grid_bounds_latlng;
-    const note = document.getElementById('eval-map-note');
-    if (latlng) {
+    const note = $el('eval-map-note');
+    if (latlng && map) {
         // 经纬度参考可用 → 叠到地图
         if (note) note.style.display = 'none';
         const bounds = [[latlng[1], latlng[0]], [latlng[3], latlng[2]]];
-        if (evalOverlay) evalMap.removeLayer(evalOverlay);
-        evalOverlay = L.imageOverlay(dataUrl, bounds, { opacity: 0.55 }).addTo(evalMap);
-        if (!evalMap.getBounds().contains(L.latLngBounds(bounds).getCenter())) {
-            evalMap.fitBounds(L.latLngBounds(bounds));
+        const old = currentEvalOverlay();
+        if (old) map.removeLayer(old);
+        setCurrentEvalOverlay(L.imageOverlay(dataUrl, bounds, { opacity: 0.55 }).addTo(map));
+        if (!map.getBounds().contains(L.latLngBounds(bounds).getCenter())) {
+            map.fitBounds(L.latLngBounds(bounds));
         }
     } else {
         // 无经纬度 → 地图仅提示（评估结果见面板/报告图）
@@ -377,7 +564,9 @@ function setEvalLayer(kind) {
 }
 
 function clearEvalOverlay() {
-    if (evalOverlay && evalMap) { evalMap.removeLayer(evalOverlay); evalOverlay = null; }
+    const map = currentEvalMap();
+    const old = currentEvalOverlay();
+    if (old && map) { map.removeLayer(old); setCurrentEvalOverlay(null); }
 }
 
 function drawEvalGridToCanvas(grid, kind) {
@@ -405,7 +594,7 @@ function drawEvalGridToCanvas(grid, kind) {
             if (v === null || v === undefined || isNaN(v)) { imgData.data[idx + 3] = 0; continue; }
             let r, g, b;
             if (kind === 'grade') {
-                const c = EVAL_GRADE_COLORS[Math.round(v)] || '#94a3b8';
+                const c = evalGradeColors[Math.round(v)] || '#94a3b8';
                 r = parseInt(c.slice(1, 3), 16); g = parseInt(c.slice(3, 5), 16); b = parseInt(c.slice(5, 7), 16);
             } else {
                 const t = Math.max(0, Math.min(1, (v - vmin) / ((vmax - vmin) || 1)));

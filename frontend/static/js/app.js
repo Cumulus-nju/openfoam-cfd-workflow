@@ -209,17 +209,35 @@ function switchAssessTab(tab) {
     if (td) td.classList.toggle('active', tab === 'drone');
 
     // 多情景动作按钮（清空 / 运行评估 / 情景计数）跟随工作台视图
-    var showEvalCtl = (tab === 'eval');
+    var showEvalCtl = (tab === 'eval' || tab === 'drone');
     ['btn-assess-run', 'btn-assess-clear', 'assess-scene-count-wrap'].forEach(function (id) {
         var el = document.getElementById(id);
         if (el) el.style.display = showEvalCtl ? '' : 'none';
     });
 
+    // 告诉评估模块当前情境：单车用倾覆阈值、无人机用机型抗风等级
+    if (typeof setAssessContext === 'function') {
+        setAssessContext(tab === 'drone' ? 'drone' : 'bike');
+    }
+
     // Leaflet 需在容器可见后再 invalidateSize
     setTimeout(function () {
         if (tab === 'siting' && window.ensureSitingMap) window.ensureSitingMap();
         else if (tab === 'eval' && window.ensureEvalMap) window.ensureEvalMap();
+        else if (tab === 'drone' && window.ensureEvalMap) window.ensureEvalMap();
     }, 60);
+}
+
+// 切换评估情境时同步图例文字并复位当前结果渲染目标
+function setAssessContext(ctx) {
+    if (typeof assessCtx === 'undefined') return;
+    assessCtx = (ctx === 'drone') ? 'drone' : 'bike';
+    if (typeof evalGradeLabels !== 'undefined') {
+        evalGradeLabels = (assessCtx === 'drone')
+            ? { 0: '风力不足/悬停受限', 1: '适飞', 2: '谨慎飞行', 3: '禁飞风险' }
+            : { 0: '静风区', 1: '适宜', 2: '中风险', 3: '高风险' };
+    }
+    if (typeof refreshAssessPanels === 'function') refreshAssessPanels();
 }
 
 

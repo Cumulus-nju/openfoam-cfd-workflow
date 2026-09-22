@@ -234,16 +234,99 @@
             </div>
         </header>
 
-        <!-- 无人机占位（后续接入同构的风场评估框架） -->
+        <!-- 无人机路线评估：与「单车选址」同构的评估框架，仅阈值/措辞不同。
+             class 与单车面板一致，但用 drone-* 前缀避免 ID/class 冲突。 -->
         <div id="assess-drone-panel" class="assess-body" style="display:none">
-            <div class="assess-placeholder">
-                <div class="assess-placeholder-icon">🛸</div>
-                <h3>无人机路线评估 · 建设中</h3>
-                <p>规划航线 → 沿航线提取各高度层风速 → 按无人机抗风阈值分级 → 输出风险路段与改线建议。</p>
-                <p class="assess-placeholder-note">
-                    复用与「单车选址」同一套多情景加权框架（本地上传 CFD 数据 / GNN 在线预测），
-                    仅阈值与输出图层不同：单车用倾覆风速 11.7 m/s，无人机用机型抗风等级。
-                </p>
+            <div class="drone-module">
+                <div class="module-toolbar module-toolbar-sub">
+                    <div class="module-toolbar-controls">
+                        <span class="assess-soon-lg">🚧 建设中：框架已就位，指标与航线规划待接入</span>
+                    </div>
+                </div>
+
+                <div class="siting-layout">
+                    <div id="drone-map">
+                        <div id="drone-map-note" style="display:none">
+                            <strong>📌 未叠加地图图层</strong><br>
+                            本地上传数据只有米坐标（无经纬度参考）<br>
+                            评估结果请看右侧面板 / 报告图
+                        </div>
+                    </div>
+
+                    <aside id="drone-panel">
+                        <div class="siting-panel-head">
+                            <h3>🛸 航线适飞性评估</h3>
+                            <span id="drone-case-info" class="siting-case-info">添加情景 → 运行评估</span>
+                        </div>
+
+                        <div class="eval-source-tabs">
+                            <button class="eval-source-tab active" id="drone-tab-upload" onclick="switchEvalSource('upload')">📤 本地上传</button>
+                            <button class="eval-source-tab" id="drone-tab-gnn" onclick="switchEvalSource('gnn')">🌪 风场预测</button>
+                        </div>
+
+                        <div id="drone-upload-box" class="eval-source-box">
+                            <label class="btn btn-upload" for="eval-file-input2">📂 选择 CSV / ZIP 文件（与单车选址共用情景列表）</label>
+                            <p class="eval-hint">
+                                沿航线各高度层的风速结果，每文件 = 一个情景<br>
+                                格式：<code>x,y,Ux,Uy,speed[,wind_direction,inlet_speed]</code><br>
+                                分级按<b>机型抗风等级</b>判定，与单车的倾覆风速阈值相互独立
+                            </p>
+                        </div>
+
+                        <div id="drone-gnn-box" class="eval-source-box" style="display:none">
+                            <p class="eval-hint">
+                                ⏳ 待接入：按设定航线抽取沿程各高度层网格 → 复用同一套多情景加权框架。
+                                <br>当前可先用「本地上传」把风场结果喂进来评估。
+                            </p>
+                        </div>
+
+                        <div id="drone-scenes-wrap" style="display:none">
+                            <div class="eval-scenes-title">🧩 情景列表 <span class="eval-hint-inline">（权重支持自定义）</span></div>
+                            <div id="drone-scenes" class="eval-scenes"></div>
+                        </div>
+
+                        <div id="drone-result" style="display:none">
+                            <div class="eval-layer-switch" id="drone-layer-switch">
+                                <button class="eval-layer-btn active" data-layer="grade" onclick="setEvalLayer('grade')">分级</button>
+                                <button class="eval-layer-btn" data-layer="mean" onclick="setEvalLayer('mean')">平均风速</button>
+                                <button class="eval-layer-btn" data-layer="calm" onclick="setEvalLayer('calm')">静风频率</button>
+                                <button class="eval-layer-btn" data-layer="strong" onclick="setEvalLayer('strong')">强风频率</button>
+                            </div>
+
+                            <div class="siting-stats-grid">
+                                <div class="stat-card stat-high"><span class="stat-num" id="drone-stat-high">0%</span><span class="stat-label">禁飞风险</span></div>
+                                <div class="stat-card stat-medium"><span class="stat-num" id="drone-stat-medium">0%</span><span class="stat-label">谨慎飞行</span></div>
+                                <div class="stat-card stat-low"><span class="stat-num" id="drone-stat-low">0%</span><span class="stat-label">适飞</span></div>
+                                <div class="stat-card stat-calm"><span class="stat-num" id="drone-stat-calm">0%</span><span class="stat-label">悬停受限</span></div>
+                            </div>
+                            <p class="siting-meta" id="drone-meta"></p>
+
+                            <div id="drone-scene-stats" class="eval-scene-stats"></div>
+
+                            <div class="siting-legend" id="drone-legend"></div>
+
+                            <div class="eval-report-wrap">
+                                <div class="eval-report-head">
+                                    <span>📋 评估报告图</span>
+                                    <button class="btn btn-sm" onclick="downloadEvalReport()">⬇ 下载报告</button>
+                                </div>
+                                <img id="drone-report-img" alt="评估报告" style="width:100%;border-radius:8px">
+                            </div>
+
+                            <div class="siting-recs">
+                                <div class="recs-title">✅ 最适飞区</div>
+                                <div id="drone-recs-suitable" class="recs-list"></div>
+                                <div class="recs-title recs-danger">⚠️ 禁飞风险区</div>
+                                <div id="drone-recs-risky" class="recs-list"></div>
+                            </div>
+                        </div>
+
+                        <div id="drone-empty" class="siting-empty">
+                            <div class="empty-icon">🛸</div>
+                            <p>上传沿航线的风场结果<br>生成多情景后点击「运行综合评估」</p>
+                        </div>
+                    </aside>
+                </div>
             </div>
         </div>
 

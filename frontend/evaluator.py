@@ -40,6 +40,48 @@ POINT_LIMIT = 2_000_000   # 单场景点数量上限
 GRADE_COLORS = {0: "#38bdf8", 1: "#10b981", 2: "#f59e0b", 3: "#ef4444"}
 GRADE_LABELS = {0: "静风区", 1: "适宜", 2: "中风险", 3: "高风险"}
 
+# ── 评估情境（同一套多情景加权框架，按用途换阈值与措辞） ──────────────────────
+# 单车：以倾覆临界风速为标尺（bike_wind_overturning_model.tex）
+# 无人机：以机型抗风等级为标尺（沿航线各高度层风速 → 按抗风等级分级）
+CONTEXTS: Dict[str, Dict[str, Any]] = {
+    "bike": {
+        "key": "bike",
+        "label": "共享单车停放适宜性",
+        "unit_actor": "单车",
+        "ground": "停放",
+        "v_crit": V_CRIT,              # 11.7
+        "gust_factor": GUST_FACTOR,    # 0.67
+        "high_factor": HIGH_FACTOR,    # 0.8
+        "medium_factor": MEDIUM_FACTOR,# 0.5
+        "calm_speed": CALM_SPEED,      # 1.5
+        "grade_labels": dict(GRADE_LABELS),
+        "title": "UrbanWind 综合评估 · 单车停放适宜性（多情景加权）",
+        "metric_name": "加权平均风速",
+    },
+    "drone": {
+        "key": "drone",
+        "label": "无人机航线适飞性",
+        "unit_actor": "无人机",
+        "ground": "适飞",
+        # 机型抗风等级：6 级（≤13.8 m/s）为多数消费级/行业级机型上限，
+        # 取 12.0 作临界、0.67 折减与单车保持同构（阵风修正思路一致）。
+        "v_crit": 12.0,
+        "gust_factor": 0.67,
+        "high_factor": 0.85,
+        "medium_factor": 0.55,
+        "calm_speed": 2.0,
+        "grade_labels": {0: "风力不足/悬停受限", 1: "适飞", 2: "谨慎飞行", 3: "禁飞风险"},
+        "title": "UrbanWind 综合评估 · 无人机航线适飞性（多情景加权）",
+        "metric_name": "加权平均风速",
+    },
+}
+
+
+def resolve_context(name: str) -> Dict[str, Any]:
+    """取评估情境参数；未知名称回落到单车。"""
+    return CONTEXTS.get((name or "bike").strip().lower(), CONTEXTS["bike"])
+
+
 WD_VEC = {"N": (0.0, 1.0), "S": (0.0, -1.0), "E": (1.0, 0.0), "W": (-1.0, 0.0)}
 
 
@@ -405,12 +447,15 @@ def _set_cn_font():
 
 def render_report(mean, calm_freq, strong_freq, grade, grid_x, grid_y,
                   stats: Dict[str, Any], scenes_meta: List[Dict[str, Any]],
-                  title: str = "") -> str:
-    """四面板报告图 → PNG base64。"""
+                  title: str = "", ctx: Optional[Dict[str, Any]] = None) -> str:
+    """四面板报告图 → PNG base64。ctx 决定标题/图例措辞（单车 or 无人机）。"""
     _set_cn_font()
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap, Normalize
     from matplotlib.patches import Patch
+
+    ctx = ctx or CONTEXTS["bike"]
+    grade_labels = ctx.get("grade_labels", GRADE_LABELS)
 
     H, W = grade.shape
     extent = [grid_x[0], grid_x[-1], grid_y[-1], grid_y[0]]
@@ -421,14 +466,14 @@ def render_report(mean, calm_freq, strong_freq, grade, grid_x, grid_y,
     grade_m = ma.masked_invalid(grade)
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 10), dpi=105)
-    fig.suptitle(title or "UrbanWind 综合评估 · 单车停放适宜性（多情景加权）",
+    fig.suptitle(title or ctx.get("title", "UrbanWind 综合评估（多情景加权）"),
                  fontsize=14, fontweight="bold")
 
     # ① 加权平均风速
     ax = axes[0][0]
     im = ax.imshow(mean_m, extent=extent, origin="upper", cmap="turbo",
                    vmin=max(stats["mean_min"], 0), vmax=stats["mean_max"] or 1)
-    ax.set_title(f"① 加权平均风速 (m/s) · {stats['n_scenes']} 情景", fontsize=11)
+    ax.set_title(f"① {ctx.get('metric_name', '加权平均风速')} (m/s) · {stats['n_scenes']} 情景", fontsize=11)
     fig.colorbar(im, ax=ax, shrink=0.85)
 
     # ② 静风频率
@@ -449,10 +494,11 @@ def render_report(mean, calm_freq, strong_freq, grade, grid_x, grid_y,
     im = ax.imshow(grade_m, extent=extent, origin="upper", cmap=cmap,
                    norm=Normalize(vmin=-0.5, vmax=3.5))
     fr = stats.get("grade_frac", {})
-    handles = [Patch(color=GRADE_COLORS[g], label=f"{GRADE_LABELS[g]} {fr.get(g, 0) * 100:.1f}%")
+    handles = [Patch(color=GRADE_COLORS[g],
+                     label=f"{grade_labels.get(g, GRADE_LABELS[g])} {fr.get(g, 0) * 100:.1f}%")
                for g in (0, 1, 2, 3)]
     ax.legend(handles=handles, loc="upper right", fontsize=9, framealpha=0.9)
-    ax.set_title("④ 停放适宜性分级", fontsize=11)
+    ax.set_title(f"④ {ctx.get('ground', '停放')}适宜性分级", fontsize=11)
 
     for ax in axes.ravel():
         ax.set_xlabel("x (m)", fontsize=9)

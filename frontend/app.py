@@ -1721,17 +1721,22 @@ async def eval_gnn(request: Dict[str, Any] = Body(...)):
 
 @app.post("/api/eval/run")
 async def eval_run(request: Dict[str, Any] = Body(...)):
-    """多情景综合分析：加权平均 + 静风/强风频率 + 停放适宜性分级 + 报告图。
+    """多情景综合分析：加权平均 + 静风/强风频率 + 适宜性分级 + 报告图。
+
+    与「综合评估」下的两个子板块共用同一套框架，只按 context 换阈值与措辞：
+    单车 = 倾覆临界风速；无人机 = 机型抗风等级。
 
     Body: {
         scene_ids: [...],
         weights?: [1.0, ...],          # 与 scene_ids 对齐
-        v_crit?, gust_factor?, high_factor?, medium_factor?, calm_speed?
+        context?: "bike" | "drone",    # 评估情境，默认 bike
+        v_crit?, gust_factor?, high_factor?, medium_factor?, calm_speed?   # 可覆盖情境默认值
     }
     """
     import traceback as _tb
     from .evaluator import (
-        aggregate, build_reference_grid, render_report, resample_scene, top_regions,
+        aggregate, build_reference_grid, render_report, resample_scene,
+        resolve_context, top_regions,
     )
 
     scene_ids = request.get("scene_ids") or []
@@ -1747,6 +1752,7 @@ async def eval_run(request: Dict[str, Any] = Body(...)):
             raise HTTPException(400, f"情景 {sid} 不在缓存（服务可能已重启，请重新上传/运行）")
         scenes.append(sc)
 
+    ctx = resolve_context(request.get("context", "bike"))
     weights = request.get("weights") or [1.0] * len(scenes)
     try:
         grid_x, grid_y = build_reference_grid(scenes)
@@ -1759,11 +1765,11 @@ async def eval_run(request: Dict[str, Any] = Body(...)):
         res = aggregate(
             resampled,
             [float(w) for w in weights],
-            v_crit=float(request.get("v_crit", 11.7)),
-            gust_factor=float(request.get("gust_factor", 0.67)),
-            high_factor=float(request.get("high_factor", 0.8)),
-            medium_factor=float(request.get("medium_factor", 0.5)),
-            calm_speed=float(request.get("calm_speed", 1.5)),
+            v_crit=float(request.get("v_crit", ctx["v_crit"])),
+            gust_factor=float(request.get("gust_factor", ctx["gust_factor"])),
+            high_factor=float(request.get("high_factor", ctx["high_factor"])),
+            medium_factor=float(request.get("medium_factor", ctx["medium_factor"])),
+            calm_speed=float(request.get("calm_speed", ctx["calm_speed"])),
         )
     except Exception as e:
         logger.error(f"eval-run CRASH: {e}\n{_tb.format_exc()}")
@@ -1790,7 +1796,8 @@ async def eval_run(request: Dict[str, Any] = Body(...)):
     stats = res["stats"]
     png = render_report(mean, calm, strong, grade, grid_x, grid_y, stats,
                         [{"wind_direction": s["wind_direction"], "inlet_speed": s["inlet_speed"]}
-                         for s in resampled])
+                         for s in resampled],
+                        ctx=ctx)
 
     latlng_bounds = None
     for sc in scenes:
@@ -1800,6 +1807,13 @@ async def eval_run(request: Dict[str, Any] = Body(...)):
 
     return {
         "success": True,
+        "context": {
+            "key": ctx["key"],
+            "label": ctx["label"],
+            "ground": ctx["ground"],
+            "grade_labels": ctx["grade_labels"],
+            "title": ctx["title"],
+        },
         "grid_bounds": [float(grid_x[0]), float(grid_y[-1]), float(grid_x[-1]), float(grid_y[0])],
         "grid_bounds_latlng": latlng_bounds,
         "grid_size": [len(grid_x), len(grid_y)],
