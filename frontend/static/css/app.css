@@ -53,6 +53,7 @@
 
     /* Layout */
     --toolbar-height: 56px;
+    --global-bar-height: 52px;   /* 全局板块导航条（两个顶层板块共用，始终可见） */
     --sidebar-width: 340px;
     --chat-width: 380px;
     --chat-collapsed-width: 56px;
@@ -105,15 +106,33 @@ html, body {
         "toolbar toolbar"
         "sidebar map"
         "statusbar statusbar";
-    height: 100vh;
+    /* 全局导航条在 #app 之外占位，这里扣掉它的高度 */
+    height: calc(100vh - var(--global-bar-height));
     width: 100vw;
     position: relative;
+}
+
+/* 全局板块导航条：两个顶层板块共用，永远可见 */
+#global-bar {
+    grid-area: globalbar;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 20px;
+    height: var(--global-bar-height);
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--glass-border);
+    position: relative;
+    z-index: 1200;
 }
 
 /* Chat panel overlay on right side */
 #chat-panel {
     position: fixed;
-    top: calc(var(--toolbar-height) + 12px);
+    top: calc(var(--global-bar-height) + var(--toolbar-height) + 12px);
     right: 12px;
     bottom: 44px;
     width: var(--chat-width);
@@ -156,7 +175,7 @@ html, body {
     grid-area: toolbar;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;   /* 品牌与板块导航已上移到 #global-bar，这里只放风场动作 */
     padding: 0 20px;
     background: var(--glass-bg);
     backdrop-filter: blur(20px);
@@ -691,7 +710,7 @@ html, body {
 
 #toast-container {
     position: fixed;
-    top: calc(var(--toolbar-height) + 16px);
+    top: calc(var(--global-bar-height) + var(--toolbar-height) + 16px);
     left: 50%;
     transform: translateX(-50%);
     z-index: 3000;
@@ -921,6 +940,7 @@ html, body {
     #app {
         grid-template-columns: 1fr;
         grid-template-areas:
+            "globalbar"
             "toolbar"
             "map"
             "statusbar";
@@ -928,7 +948,7 @@ html, body {
     #sidebar {
         position: fixed;
         left: 0;
-        top: var(--toolbar-height);
+        top: calc(var(--global-bar-height) + var(--toolbar-height));
         bottom: 32px;
         width: var(--sidebar-width);
         transform: translateX(-100%);
@@ -1139,8 +1159,12 @@ html, body {
 
 @media (max-width: 1100px) {
     .scene-nav { order: 3; width: 100%; justify-content: center; margin-top: 6px; }
+    #global-bar { height: auto; min-height: var(--global-bar-height); flex-wrap: wrap; row-gap: 4px; padding: 6px 16px; }
+    /* 全局条高度变为 auto，用 flex 撑满剩余高度更稳 */
+    body { display: flex; flex-direction: column; }
+    #wind-module { flex: 1; min-height: 0; }
     #toolbar { height: auto; min-height: var(--toolbar-height); flex-wrap: wrap; row-gap: 4px; padding: 6px 16px; }
-    #app { grid-template-rows: auto 1fr 32px; }
+    #app { height: 100%; grid-template-rows: auto 1fr 32px; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1148,8 +1172,8 @@ html, body {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 #siting-module {
-    height: 100vh;
-    width: 100vw;
+    height: 100%;
+    width: 100%;
     display: flex;
     flex-direction: column;
     background: var(--bg-deepest);
@@ -1168,6 +1192,127 @@ html, body {
     -webkit-backdrop-filter: blur(20px);
     border-bottom: 1px solid var(--glass-border);
     z-index: 100;
+    position: relative;
+}
+
+/* ── 综合评估：内层子板块导航（单车选址 / 无人机路线评估） ─────────────────── */
+
+#assess-module {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--global-bar-height));
+    overflow: hidden;
+}
+
+.assess-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--glass-border);
+}
+
+.assess-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 16px;
+    border: none;
+    border-radius: calc(var(--radius-md) - 2px);
+    background: transparent;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+    white-space: nowrap;
+}
+
+.assess-tab:hover {
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.assess-tab.active {
+    background: rgba(6, 182, 212, 0.16);
+    color: var(--accent-cyan-light);
+}
+
+.assess-soon {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 20px;
+    background: rgba(245, 158, 11, 0.18);
+    color: #f5b942;
+    font-weight: 500;
+}
+
+/* 子板块容器：承接内层模块的 flex 布局，让地图撑满 */
+.assess-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+}
+
+.assess-body > div {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 子模块内的次级参数条 */
+.module-toolbar-sub {
+    height: auto;
+    min-height: 48px;
+    padding: 6px 20px;
+    justify-content: flex-end;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* 无人机占位页 */
+.assess-placeholder {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 40px 24px;
+    gap: 10px;
+}
+
+.assess-placeholder-icon {
+    font-size: 56px;
+    line-height: 1;
+    opacity: 0.85;
+}
+
+.assess-placeholder h3 {
+    margin: 6px 0 0;
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.assess-placeholder p {
+    max-width: 620px;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.75;
+    color: var(--text-muted);
+}
+
+.assess-placeholder-note {
+    padding: 14px 18px;
+    border-radius: var(--radius-md);
+    background: rgba(6, 182, 212, 0.06);
+    border: 1px solid var(--glass-border);
 }
 
 .logo-bike {

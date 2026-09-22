@@ -157,36 +157,66 @@ async function init() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 场景切换（城市风场模拟 = 平台基底；单车选址/无人机 = 可切入的应用场景）
-// ═══════════════════════════════════════════════════════════════════════════════
+// 场景切换 —— 顶层两个板块：wind(城市风场模拟) / assess(综合评估)
+// assess 内层再分 siting(单车选址) / eval(多情景，阶段2并入) / drone(无人机路线评估)
 
 let windMapReady = false;
+let assessTab = 'siting';
 
 function showView(name) {
     document.getElementById('wind-module').style.display = (name === 'wind') ? '' : 'none';
-    document.getElementById('siting-module').style.display = (name === 'siting') ? '' : 'none';
-    document.getElementById('eval-module').style.display = (name === 'eval') ? '' : 'none';
-    // 场景导航高亮
+    document.getElementById('assess-module').style.display = (name === 'assess') ? '' : 'none';
     var w = document.getElementById('scene-btn-wind');
-    var s = document.getElementById('scene-btn-siting');
-    var e = document.getElementById('scene-btn-eval');
+    var a = document.getElementById('scene-btn-assess');
     if (w) w.classList.toggle('active', name === 'wind');
-    if (s) s.classList.toggle('active', name === 'siting');
-    if (e) e.classList.toggle('active', name === 'eval');
+    if (a) a.classList.toggle('active', name === 'assess');
 }
 
 function switchScene(name) {
     if (name === 'wind') {
         showView('wind');
         ensureWindMap();
-    } else if (name === 'siting') {
-        showView('siting');
-        if (window.ensureSitingMap) setTimeout(window.ensureSitingMap, 50);
-    } else if (name === 'eval') {
-        showView('eval');
-        if (window.ensureEvalMap) setTimeout(window.ensureEvalMap, 50);
+        return;
+    }
+    // 兼容旧入口名：siting / eval / drone 一律进「综合评估」对应子板块
+    if (name === 'assess' || name === 'siting' || name === 'eval' || name === 'drone') {
+        showView('assess');
+        switchAssessTab(name === 'assess' ? assessTab : name);
     }
 }
+
+// 综合评估内层子板块切换
+function switchAssessTab(tab) {
+    if (tab !== 'siting' && tab !== 'eval' && tab !== 'drone') tab = 'siting';
+    assessTab = tab;
+
+    var siting = document.getElementById('assess-siting-panel');
+    var evalP = document.getElementById('assess-eval-panel');
+    var drone = document.getElementById('assess-drone-panel');
+    if (siting) siting.style.display = (tab === 'siting') ? '' : 'none';
+    if (evalP) evalP.style.display = (tab === 'eval') ? '' : 'none';
+    if (drone) drone.style.display = (tab === 'drone') ? '' : 'none';
+
+    // 内层按钮高亮：单车选址 / 无人机路线评估
+    var tb = document.getElementById('assess-tab-siting');
+    var td = document.getElementById('assess-tab-drone');
+    if (tb) tb.classList.toggle('active', tab === 'siting' || tab === 'eval');
+    if (td) td.classList.toggle('active', tab === 'drone');
+
+    // 多情景动作按钮只在 eval 视图显示（阶段2并入单车选址后统一）
+    var showEvalCtl = (tab === 'eval');
+    ['btn-assess-run', 'btn-assess-clear', 'assess-scene-count-wrap'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.style.display = showEvalCtl ? '' : 'none';
+    });
+
+    // Leaflet 需在容器可见后再 invalidateSize
+    setTimeout(function () {
+        if (tab === 'siting' && window.ensureSitingMap) window.ensureSitingMap();
+        else if (tab === 'eval' && window.ensureEvalMap) window.ensureEvalMap();
+    }, 60);
+}
+
 
 // 从应用场景返回风场基底
 function goToWind() {

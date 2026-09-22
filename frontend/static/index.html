@@ -20,32 +20,41 @@
 </head>
 <body>
     <!-- ═══════════════════════════════════════════════════════════════════════
+         全局板块导航条 —— 两个顶层板块共用，始终可见
+         （必须放在两个模块之外：放进模块内部会被 display:none 连带隐藏，
+           切到综合评估后就点不回城市风场了）
+         ════════════════════════════════════════════════════════════════════ -->
+    <header id="global-bar">
+        <div class="toolbar-brand">
+            <div class="logo">🌬</div>
+            <span class="brand-text">UrbanWind</span>
+        </div>
+        <nav class="scene-nav">
+            <button class="scene-btn active" id="scene-btn-wind" onclick="switchScene('wind')" title="城市风场模拟（基础能力）">
+                <span class="scene-dot"></span>🏙️ 城市风场
+            </button>
+            <span class="scene-sep"></span>
+            <button class="scene-btn" id="scene-btn-assess" onclick="switchScene('assess')" title="综合评估：单车选址 / 无人机路线评估">
+                <span class="scene-dot"></span>📊 综合评估
+            </button>
+        </nav>
+        <div class="toolbar-actions">
+            <div class="user-chip" id="user-chip" style="display:none">
+                <span class="user-avatar" id="user-avatar">👤</span>
+                <span class="user-name" id="user-name">-</span>
+                <button class="btn btn-sm" id="btn-password" onclick="showPasswordModal()" title="修改密码">🔑</button>
+                <button class="btn btn-sm" id="btn-logout" onclick="logoutUser()" title="退出登录">退出</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
          WIND MODULE — 城市风场模拟（平台基底，默认主视图）
          ════════════════════════════════════════════════════════════════════ -->
     <div id="wind-module">
         <div id="app">
-            <!-- Toolbar -->
+            <!-- Toolbar（风场模拟专属动作） -->
             <header id="toolbar">
-                <div class="toolbar-brand">
-                    <div class="logo">🌬</div>
-                    <span class="brand-text">UrbanWind</span>
-                </div>
-                <!-- 场景导航：基底 + 可切入的应用场景 -->
-                <nav class="scene-nav">
-                    <button class="scene-btn active" id="scene-btn-wind" onclick="switchScene('wind')" title="城市风场模拟（基础能力）">
-                        <span class="scene-dot"></span>🏙️ 城市风场
-                    </button>
-                    <span class="scene-sep"></span>
-                    <button class="scene-btn" id="scene-btn-siting" onclick="switchScene('siting')" title="基于风场结果评估共享单车停放点">
-                        <span class="scene-dot"></span>🚲 单车选址
-                    </button>
-                    <button class="scene-btn" id="scene-btn-eval" onclick="switchScene('eval')" title="多情景风环境综合评估（本地上传CFD数据 / GNN在线预测）">
-                        <span class="scene-dot"></span>📍 综合评估
-                    </button>
-                    <button class="scene-btn scene-disabled" id="scene-btn-drone" onclick="showToast('低空经济板块建设中，敬请期待', 'info')" title="基于风场能力做无人机航线规划与预警">
-                        <span class="scene-dot"></span>🛸 无人机
-                    </button>
-                </nav>
                 <div class="toolbar-actions">
                     <button class="btn" onclick="showImportModal()" title="导入数据">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -72,13 +81,6 @@
                     <button class="btn btn-accent" id="btn-predict-case" style="display:none" onclick="showWindParamsModal('fromCase')" title="从CFD案例预测风场">🌪 预测风场</button>
                     <button class="btn" id="btn-save-trees" onclick="saveTreesToCase()" style="display:none" title="保存树木到案例">💾 保存树木</button>
                     <span id="btn-update-wind-container"></span>
-                    <span class="toolbar-divider"></span>
-                    <div class="user-chip" id="user-chip" style="display:none">
-                        <span class="user-avatar" id="user-avatar">👤</span>
-                        <span class="user-name" id="user-name">-</span>
-                        <button class="btn btn-sm" id="btn-password" onclick="showPasswordModal()" title="修改密码">🔑</button>
-                        <button class="btn btn-sm" id="btn-logout" onclick="logoutUser()" title="退出登录">退出</button>
-                    </div>
                 </div>
             </header>
 
@@ -196,9 +198,9 @@
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════════════
-         SITING MODULE — 单车选址工作台
+         ASSESS MODULE — 综合评估（内层：单车选址 / 无人机路线评估）
          ════════════════════════════════════════════════════════════════════ -->
-    <div id="siting-module" style="display:none">
+    <div id="assess-module" style="display:none">
         <header class="module-toolbar">
             <div class="toolbar-brand">
                 <button class="btn btn-icon" onclick="goToWind()" title="返回城市风场模拟">
@@ -206,10 +208,50 @@
                         <polyline points="15 18 9 12 15 6"/>
                     </svg>
                 </button>
-                <div class="logo logo-bike">🚲</div>
-                <span class="brand-text">UrbanWind · 单车选址</span>
+                <div class="logo">📊</div>
+                <span class="brand-text">UrbanWind · 综合评估</span>
             </div>
+            <!-- 内层应用场景切换 -->
+            <nav class="assess-nav">
+                <button class="assess-tab active" id="assess-tab-siting" onclick="switchAssessTab('siting')" title="共享单车停放适宜性评估">
+                    🚲 单车选址
+                </button>
+                <button class="assess-tab" id="assess-tab-drone" onclick="switchAssessTab('drone')" title="无人机航线风风险与适飞性评估">
+                    🛸 无人机路线评估
+                    <span class="assess-soon">建设中</span>
+                </button>
+            </nav>
+            <div class="module-toolbar-controls">
+                <div id="assess-scene-count-wrap" class="ctl-group">
+                    <label>评估对象</label>
+                    <span id="assess-scene-count" class="eval-count">0 个情景</span>
+                </div>
+                <button class="btn btn-danger" id="btn-assess-clear" onclick="clearEvalScenes()" style="display:none">🗑 清空</button>
+                <button class="btn btn-primary" id="btn-assess-run" onclick="runEval()" disabled style="display:none">🎯 运行综合评估</button>
+            </div>
+        </header>
 
+        <!-- 无人机占位（后续接入同构的风场评估框架） -->
+        <div id="assess-drone-panel" class="assess-body" style="display:none">
+            <div class="assess-placeholder">
+                <div class="assess-placeholder-icon">🛸</div>
+                <h3>无人机路线评估 · 建设中</h3>
+                <p>规划航线 → 沿航线提取各高度层风速 → 按无人机抗风阈值分级 → 输出风险路段与改线建议。</p>
+                <p class="assess-placeholder-note">
+                    复用与「单车选址」同一套多情景加权框架（本地上传 CFD 数据 / GNN 在线预测），
+                    仅阈值与输出图层不同：单车用倾覆风速 11.7 m/s，无人机用机型抗风等级。
+                </p>
+            </div>
+        </div>
+
+        <!-- 单车选址（现有工作台；多情景/加权/上传后续并入） -->
+        <div id="assess-siting-panel" class="assess-body">
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         SITING MODULE — 单车选址工作台
+         ════════════════════════════════════════════════════════════════════ -->
+    <div id="siting-module">
+        <!-- 单案例风况参数（多情景/加权能力阶段2并入） -->
+        <div class="module-toolbar module-toolbar-sub">
             <div class="module-toolbar-controls">
                 <div class="ctl-group">
                     <label>CFD 案例</label>
@@ -232,7 +274,7 @@
                 </div>
                 <button class="btn btn-primary" id="btn-siting-run" onclick="runBikeSiting()">🎯 评估选址</button>
             </div>
-        </header>
+        </div>
 
         <div class="siting-layout">
             <div id="siting-map"></div>
@@ -278,30 +320,14 @@
             </aside>
         </div>
     </div>
+        </div><!-- /assess-siting-panel -->
 
     <!-- ═══════════════════════════════════════════════════════════════════════
-         EVAL MODULE — 综合评估工作台（多情景风环境分析）
+         EVAL — 多情景风环境分析（阶段2将并入「单车选址」作为其数据源能力）
          ════════════════════════════════════════════════════════════════════ -->
-    <div id="eval-module" style="display:none">
-        <header class="module-toolbar">
-            <div class="toolbar-brand">
-                <button class="btn btn-icon" onclick="goToWind()" title="返回城市风场模拟">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="15 18 9 12 15 6"/>
-                    </svg>
-                </button>
-                <div class="logo logo-bike">📍</div>
-                <span class="brand-text">UrbanWind · 综合评估</span>
-            </div>
-            <div class="module-toolbar-controls">
-                <div class="ctl-group">
-                    <label>评估对象</label>
-                    <span id="eval-scene-count" class="eval-count">0 个情景</span>
-                </div>
-                <button class="btn btn-danger" onclick="clearEvalScenes()">🗑 清空</button>
-                <button class="btn btn-primary" id="btn-eval-run" onclick="runEval()" disabled>🎯 运行综合评估</button>
-            </div>
-        </header>
+    <div id="assess-eval-panel" class="assess-body" style="display:none">
+    <div id="eval-module">
+        <!-- 评估动作由 #assess-scene-count / #btn-assess-run 承载（见模块工具栏） -->
 
         <div class="siting-layout">
             <div id="eval-map">
@@ -407,6 +433,8 @@
             </aside>
         </div>
     </div>
+        </div><!-- /assess-eval-panel -->
+    </div><!-- /assess-module -->
 
     <!-- ═══════════════════════════════════════════════════════════════════════
          Import Modal
