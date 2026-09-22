@@ -1159,8 +1159,9 @@ async def bike_siting(request: Dict[str, Any] = Body(...)):
         wind_direction: "N", inlet_speed: 5.0,
         v_crit: 11.7,            # 单车倾覆临界风速 (m/s)，来源 bike_wind_overturning_model.tex
                                  # 【阵风口径】：使单车倾倒的是阵风，而模拟给的是平均风
-        gust_factor: 0.67,       # = 1/G（G≈1.49），把阵风口径阈值换算到平均风速口径
-        high_factor: 0.8,        # 高风险阈值系数 (相对阵风阈值)
+        gust_factor: 0.53,       # = 1/G，G = 1 + k·TI = 1 + 3×0.3 = 1.9
+                                 # 默认值取自 evaluator.CONTEXTS["bike"]，两边必须一致
+        high_factor: 0.8,        # 高风险阈值系数 (相对判决阈值)
         medium_factor: 0.5,      # 中等风险阈值系数
         calm_speed: 1.5,         # 静风区判据 (m/s)
     }
@@ -1192,11 +1193,14 @@ async def bike_siting(request: Dict[str, Any] = Body(...)):
 
         wind_dir = str(request.get("wind_direction", "N")).upper()
         inlet_speed = float(request.get("inlet_speed", 5.0))
-        v_crit = float(request.get("v_crit", 11.7))
-        gust_factor = float(request.get("gust_factor", 0.67))
-        high_factor = float(request.get("high_factor", 0.8))
-        medium_factor = float(request.get("medium_factor", 0.5))
-        calm_speed = float(request.get("calm_speed", 1.5))
+        # 阈值默认值统一取自 evaluator 的单一定义，避免与「综合评估工作台」口径漂移。
+        from .evaluator import CONTEXTS as _CTX
+        _bike = _CTX["bike"]
+        v_crit = float(request.get("v_crit", _bike["v_crit"]))
+        gust_factor = float(request.get("gust_factor", _bike["gust_factor"]))
+        high_factor = float(request.get("high_factor", _bike["high_factor"]))
+        medium_factor = float(request.get("medium_factor", _bike["medium_factor"]))
+        calm_speed = float(request.get("calm_speed", _bike["calm_speed"]))
         v_eff = v_crit * gust_factor  # 换算到「平均风速」口径的倾覆阈值（阵风口径 ÷ G）
 
         buildings = _case_buildings_from_geojson(geojson)

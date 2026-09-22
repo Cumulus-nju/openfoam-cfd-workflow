@@ -69,7 +69,7 @@ CONTEXTS: Dict[str, Dict[str, Any]] = {
         "unit_actor": "单车",
         "ground": "停放",
         "v_crit": V_CRIT,              # 11.7
-        "gust_factor": GUST_FACTOR,    # 0.67
+        "gust_factor": GUST_FACTOR,    # 0.53（G≈1.9）
         "high_factor": HIGH_FACTOR,    # 0.8
         "medium_factor": MEDIUM_FACTOR,# 0.5
         "calm_speed": CALM_SPEED,      # 1.5
