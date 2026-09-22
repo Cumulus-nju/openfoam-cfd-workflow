@@ -181,13 +181,18 @@ function switchScene(name) {
     // 兼容旧入口名：siting / eval / drone 一律进「综合评估」对应子板块
     if (name === 'assess' || name === 'siting' || name === 'eval' || name === 'drone') {
         showView('assess');
-        switchAssessTab(name === 'assess' ? assessTab : name);
+        // 「单车选址」默认进入完整工作台（多情景 + 加权 + 本地上传/GNN）
+        var target = (name === 'assess') ? 'eval' : name;
+        switchAssessTab(target);
     }
 }
 
 // 综合评估内层子板块切换
+// 注：「单车选址」直接落到完整工作台（多情景 + 权重 + 本地上传 / GNN 在线），
+//     多情景/加权是它的固有能力，不是单独板块。
 function switchAssessTab(tab) {
     if (tab !== 'siting' && tab !== 'eval' && tab !== 'drone') tab = 'siting';
+    // siting 与 eval 是同一个子板块的两种视图：eval = 完整工作台（默认），siting = 单案例风况
     assessTab = tab;
 
     var siting = document.getElementById('assess-siting-panel');
@@ -203,7 +208,7 @@ function switchAssessTab(tab) {
     if (tb) tb.classList.toggle('active', tab === 'siting' || tab === 'eval');
     if (td) td.classList.toggle('active', tab === 'drone');
 
-    // 多情景动作按钮只在 eval 视图显示（阶段2并入单车选址后统一）
+    // 多情景动作按钮（清空 / 运行评估 / 情景计数）跟随工作台视图
     var showEvalCtl = (tab === 'eval');
     ['btn-assess-run', 'btn-assess-clear', 'assess-scene-count-wrap'].forEach(function (id) {
         var el = document.getElementById(id);

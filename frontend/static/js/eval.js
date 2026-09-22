@@ -165,8 +165,19 @@ function renderEvalSceneRows() {
     const count = document.getElementById('eval-scene-count');
     const runBtn = document.getElementById('btn-eval-run');
 
-    count.textContent = `${evalScenes.length} 个情景`;
-    runBtn.disabled = evalScenes.length === 0;
+    // 情景数同时写「模块工具栏」与「全局工具条」两处显示
+    const countTxt = `${evalScenes.length} 个情景`;
+    if (count) count.textContent = countTxt;
+    const gcount = document.getElementById('assess-scene-count');
+    if (gcount) gcount.textContent = countTxt;
+
+    // 运行按钮在阶段2已上移到全局工具条（#btn-assess-run），两个都同步禁用态
+    const gRunBtn = document.getElementById('btn-assess-run');
+    const disabled = evalScenes.length === 0;
+    if (runBtn) runBtn.disabled = disabled;
+    if (gRunBtn) gRunBtn.disabled = disabled;
+
+    if (!wrap || !box) return;
     if (!evalScenes.length) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
 
@@ -227,12 +238,21 @@ function exportEvalScene(sceneId) {
 
 // ── 运行综合评估 ─────────────────────────────────────────────────────────────
 
+// 运行按钮分布在全局工具条(#btn-assess-run)与模块内(#btn-eval-run)，统一设置状态
+function setEvalRunButtons(disabled, text) {
+    ['btn-assess-run', 'btn-eval-run'].forEach(id => {
+        const b = document.getElementById(id);
+        if (!b) return;
+        b.disabled = disabled;
+        if (text !== undefined) b.textContent = text;
+    });
+}
+
 async function runEval() {
     if (!evalScenes.length) { showToast('请先添加情景', 'error'); return; }
     const runBtn = document.getElementById('btn-eval-run');
-    runBtn.disabled = true;
-    const oldText = runBtn.textContent;
-    runBtn.textContent = '⏳ 评估中...';
+    const oldText = runBtn ? runBtn.textContent : '🎯 运行综合评估';
+    setEvalRunButtons(true, '⏳ 评估中...');
 
     try {
         const resp = await fetch('/api/eval/run', {
@@ -251,8 +271,7 @@ async function runEval() {
     } catch (e) {
         showToast('评估失败: ' + e.message, 'error');
     } finally {
-        runBtn.disabled = false;
-        runBtn.textContent = oldText;
+        setEvalRunButtons(false, oldText);
     }
 }
 

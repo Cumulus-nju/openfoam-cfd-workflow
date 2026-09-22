@@ -785,7 +785,8 @@ async def index():
     """Serve the main web UI."""
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
-        return index_path.read_text(encoding="utf-8")
+        return HTMLResponse(index_path.read_text(encoding="utf-8"),
+                            headers={"Cache-Control": "no-store, must-revalidate"})
     return HTMLResponse("<h1>UrbanWind CFD</h1><p>Frontend not built yet.</p>")
 
 
@@ -794,15 +795,31 @@ async def login_page():
     """Serve the login/register page."""
     login_path = STATIC_DIR / "login.html"
     if login_path.exists():
-        return login_path.read_text(encoding="utf-8")
+        return HTMLResponse(login_path.read_text(encoding="utf-8"),
+                            headers={"Cache-Control": "no-store, must-revalidate"})
     return HTMLResponse("<h1>UrbanWind CFD</h1><p>Login page not built yet.</p>")
+
+
+class _NoCacheStaticFiles(StaticFiles):
+    """静态资源禁用浏览器缓存。
+
+    本站是本地前端，改完代码要立刻生效。原先只有 ETag/Last-Modified，
+    浏览器会启发式缓存，改完 JS/CSS 刷新页面仍是旧代码（实测踩过：
+    新加的 setEvalRunButtons 在页面里是 undefined），必须 Ctrl+F5 才行。
+    """
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
 
 
 # Mount static files (CSS, JS)
 if (STATIC_DIR / "css").exists():
-    app.mount("/static/css", StaticFiles(directory=str(STATIC_DIR / "css")), name="css")
+    app.mount("/static/css", _NoCacheStaticFiles(directory=str(STATIC_DIR / "css")), name="css")
 if (STATIC_DIR / "js").exists():
-    app.mount("/static/js", StaticFiles(directory=str(STATIC_DIR / "js")), name="js")
+    app.mount("/static/js", _NoCacheStaticFiles(directory=str(STATIC_DIR / "js")), name="js")
 
 
 # ── GNN 风场预测 ────────────────────────────────────────────────────────────

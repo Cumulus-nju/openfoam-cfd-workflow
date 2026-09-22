@@ -213,7 +213,7 @@
             </div>
             <!-- 内层应用场景切换 -->
             <nav class="assess-nav">
-                <button class="assess-tab active" id="assess-tab-siting" onclick="switchAssessTab('siting')" title="共享单车停放适宜性评估">
+                <button class="assess-tab active" id="assess-tab-siting" onclick="switchAssessTab('eval')" title="共享单车停放适宜性评估（多情景 + 权重 + 本地上传/GNN）">
                     🚲 单车选址
                 </button>
                 <button class="assess-tab" id="assess-tab-drone" onclick="switchAssessTab('drone')" title="无人机航线风风险与适飞性评估">
@@ -225,9 +225,12 @@
                 <div id="assess-scene-count-wrap" class="ctl-group">
                     <label>评估对象</label>
                     <span id="assess-scene-count" class="eval-count">0 个情景</span>
+                    <!-- 别名节点：eval.js 的 renderEvalSceneRows 会写这两个 id，缺失会抛错 -->
+                    <span id="eval-scene-count" style="display:none">0 个情景</span>
                 </div>
                 <button class="btn btn-danger" id="btn-assess-clear" onclick="clearEvalScenes()" style="display:none">🗑 清空</button>
                 <button class="btn btn-primary" id="btn-assess-run" onclick="runEval()" disabled style="display:none">🎯 运行综合评估</button>
+                <button class="btn btn-primary" id="btn-eval-run" onclick="runEval()" disabled style="display:none">🎯 运行综合评估</button>
             </div>
         </header>
 
@@ -327,7 +330,7 @@
          ════════════════════════════════════════════════════════════════════ -->
     <div id="assess-eval-panel" class="assess-body" style="display:none">
     <div id="eval-module">
-        <!-- 评估动作由 #assess-scene-count / #btn-assess-run 承载（见模块工具栏） -->
+        <!-- 评估动作由全局工具条的 #btn-assess-run / #btn-assess-clear 承载 -->
 
         <div class="siting-layout">
             <div id="eval-map">

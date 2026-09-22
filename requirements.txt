@@ -4,3 +4,7 @@ ezdxf==1.4.4
 llama-cpp-python==0.3.25
 pydantic==2.13.4
 python-multipart==0.0.30
+# 综合评估（多情景加权 / 重采样 / 报告图）与风场后处理需要
+numpy
+scipy
+matplotlib
