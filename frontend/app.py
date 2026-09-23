@@ -154,6 +154,14 @@ async def get_config():
     避免把任何盘符或绝对路径硬编码进 JS —— clone 到哪台机器都能用。
     """
     gnn_ready = GNN_CHECKPOINT.exists()
+    # FNO 代理模型（FLUME-FNO 复现）可用性
+    try:
+        from . import fno_predictor as _fno
+        fno_ok, fno_msg = _fno.available()
+        fno_info = {"available": fno_ok, "message": fno_msg,
+                    "checkpoint": str(_fno.CKPT)}
+    except Exception as _e:
+        fno_info = {"available": False, "message": f"FNO 模块加载失败: {_e}"}
     return {
         "success": True,
         "cases_dir": CFD_CASES_DIR.as_posix(),
@@ -168,9 +176,81 @@ async def get_config():
                      "请设置 URBANWIND_GNN_DIR / URBANWIND_GNN_CKPT。"
             ),
         },
+        "fno": fno_info,
         "project_root": PROJECT_ROOT.as_posix(),
         "server": {"host": SERVER_HOST, "port": SERVER_PORT},
     }
+
+
+@app.get("/api/fno/info")
+async def fno_info():
+    """FNO 代理模型状态（是否有权重、用哪个 checkpoint）。"""
+    try:
+        from . import fno_predictor as _fno
+        ok, msg = _fno.available()
+        return {"success": True, "available": ok, "message": msg,
+                "checkpoint": str(_fno.CKPT), "data_dir": str(_fno.DATA_DIR)}
+    except Exception as e:
+        return {"success": False, "detail": f"FNO 不可用: {e}"}
+
+
+@app.get("/api/fno/cases")
+async def fno_cases():
+    """列出 FNO 数据集里可预测的算例。"""
+    try:
+        from . import fno_predictor as _fno
+        d = _fno.DATA_DIR / "cases"
+        if not d.exists():
+            return {"success": True, "cases": [], "note": f"数据目录不存在: {d}"}
+        out = []
+        for f in sorted(d.glob("*.npz")):
+            try:
+                z = np.load(f, allow_pickle=False)
+                if "mddf_h" not in z.files:
+                    continue
+                meta = json.loads(str(z["meta"]))
+                out.append({
+                    "name": f.stem,
+                    "grid": list(z["speed"].shape),
+                    "inlet_speed": float(meta.get("inlet_speed", 0)),
+                    "wind_deg": float(meta.get("wind_deg", 0)),
+                    "num_buildings": int(meta.get("num_buildings", 0)),
+                })
+            except Exception:
+                continue
+        return {"success": True, "cases": out}
+    except Exception as e:
+        raise HTTPException(500, f"列出 FNO 算例失败: {e}")
+
+
+@app.post("/api/fno/predict")
+async def fno_predict(request: Dict[str, Any] = Body(...)):
+    """用 FNO 代理模型预测算例的风场（FLUME-FNO 复现）。
+
+    Body: {"case_name": "njyz_ts_E", "stride": 16}
+    返回行人高度风速场 + 与 CFD 真值的对比指标。
+    """
+    import traceback as _tb
+    try:
+        from . import fno_predictor as _fno
+        case_name = str(request.get("case_name") or request.get("case") or "").strip()
+        if not case_name:
+            raise HTTPException(400, "缺少 case_name")
+        ok, msg = _fno.available()
+        if not ok:
+            raise HTTPException(503, f"FNO 模型不可用：{msg}")
+        stride = int(request.get("stride", 16))
+        r = _fno.predict_case(case_name, stride=stride)
+        if r is None:
+            raise HTTPException(404, f"算例 {case_name} 没有 FNO 数据（NPZ）")
+        logger.info(f"fno/predict: {case_name} MAE={r['metrics']['mae']:.3f} "
+                    f"R2={r['metrics']['r2']:+.3f}")
+        return {"success": True, **r}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"fno/predict CRASH: {e}\n{_tb.format_exc()}")
+        raise HTTPException(500, f"FNO 预测失败: {e}")
 
 
 # ── Auth (登录 / 注册 / 会话管理) ─────────────────────────────────────────────
